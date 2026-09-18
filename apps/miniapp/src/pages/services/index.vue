@@ -1,0 +1,9 @@
+<script setup lang="ts">
+import PageShell from '../../components/PageShell.vue'
+import AppIcon from '../../components/AppIcon.vue'
+import { demo } from '../../store'
+import { requireLogin } from '../../navigation'
+const services=[{icon:'star',title:'我的收藏',sub:'喜欢的商品，都在这里',kind:'favorites'},{icon:'gift',title:'积分中心',sub:'演示 860 积分 · 探索积分权益',kind:'points'},{icon:'user',title:'我要加入',sub:'让你的热爱，成为更多人的快乐',kind:'join'}]
+</script>
+<template><PageShell title="服务中心" backable><view class="body"><view class="soft balance"><view class="muted small">账户余额（元）· 示例</view><view class="amount">{{demo.loggedIn?'128.00':'— —'}}</view><button class="ui-btn between wide small accent" @click="requireLogin('detail',{kind:'balance'})"><text>余额查看</text><text>查看明细 ›</text></button></view><view class="section-head"><text class="heading">常用服务</text></view><view class="stack"><button v-for="service in services" :key="service.kind" class="ui-btn card service-row" @click="requireLogin('detail',{kind:service.kind})"><view class="icon-slot"><AppIcon :name="service.icon" active/></view><view class="grow"><view class="heading">{{service.title}}</view><view class="small muted">{{service.sub}}</view></view><text class="muted">›</text></button></view><view class="closing"><view>陪你发现游戏的另一种快乐</view><view class="muted small">从一次开黑，到一群志同道合的朋友</view></view></view></PageShell></template>
+<style scoped>.balance{padding:34rpx;margin-top:20rpx}.amount{font-size:76rpx;font-weight:700;margin:16rpx 0 24rpx}.service-row{width:100%;display:flex;align-items:center;gap:26rpx;text-align:left}.icon-slot{width:88rpx;height:88rpx;display:flex;align-items:center;justify-content:center;background:#e7e1ef;border-radius:24rpx;flex-shrink:0}.service-row .heading{font-size:30rpx;margin-bottom:10rpx}.closing{background:#eeeaf1;border-radius:28rpx;padding:30rpx;margin-top:70rpx}.closing .small{margin-top:12rpx}</style>

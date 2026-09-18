@@ -1,0 +1,42 @@
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const assert=require('node:assert/strict');const fs=require('node:fs');
+fs.mkdirSync('test-results',{recursive:true});
+(async()=>{
+ const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+ const page=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1});
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const text=(name)=>page.getByText(name,{exact:true}).filter({visible:true});
+ const click=async name=>{await text(name).last().click();await page.waitForTimeout(250)};
+ const route=async path=>{await page.goto(`http://127.0.0.1:5173/#/pages/${path}`);await page.waitForTimeout(500)};
+ const capture=async name=>{await page.screenshot({path:`test-results/${name}.png`,fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`${name} horizontal overflow`)};
+ await route('home/index');await capture('01-home');
+ for(const [label,title] of [['频道','频道'],['消息','会话'],['我的','我的'],['首页','游伴 CLUB']]) {
+  await page.locator('uni-tabbar').getByText(label,{exact:true}).click();
+  await page.locator('.page-title').filter({hasText:title}).filter({visible:true}).waitFor();
+ }
+ assert.equal(await page.locator('.shortcuts uni-button').count(),4);
+ await click('活动抽奖');await text('好玩的活动，正在准备').waitFor();await page.locator('.back-button').click();await click('下单流程');await text('提交预约与付款').waitFor();await page.locator('.back-button').click();
+ await click('客服中心');await text('很高兴为你解答').waitFor();await page.locator('.back-button').click();await click('考核中心');await text('考核中心筹备中').waitFor();await page.locator('.back-button').click();
+ await click('和平精英');assert.equal(await page.locator('.grid .product').count(),1);
+ await page.locator('[aria-label="搜索商品"]').click();await page.locator('.search input').fill('不存在');await text('没有找到相关商品').waitFor();await click('清除');
+ await click('更多 ›');await text('限时特价').waitFor();await click('全部');await click('价格 ↑↓');assert.match(await page.locator('.grid .product').first().innerText(),/一起轻松吃鸡/);await capture('05-specials');
+ await page.locator('.grid .product').first().click();await text('服务详情').waitFor();await page.locator('.primary').filter({hasText:'创建演示订单'}).click();await text('微信登录（演示）').waitFor();await capture('08-login');
+ await click('微信登录（演示）');await text('请先阅读并勾选用户协议与隐私政策').waitFor();await page.waitForTimeout(1600);assert.match(page.url(),/login/);
+ await click('《用户协议》');await text('用户协议 · 演示说明').waitFor();await page.locator('.back-button').click();
+ await page.locator('uni-checkbox').click();await click('微信登录（演示）');await text('服务详情').waitFor();await page.waitForTimeout(1800);
+ await page.locator('.primary').filter({hasText:'创建演示订单'}).click();await click('确认演示');await text('我的订单').waitFor();assert.equal(await page.locator('.order').count(),3);
+ await page.locator('.order').first().getByText('模拟付款',{exact:true}).click();await click('确认演示');await page.waitForTimeout(1600);assert.equal(await page.locator('.order-tabs .active').innerText(),'待发货');await capture('06-orders');
+ await click('待付款');await page.locator('.order').first().getByText('取消订单',{exact:true}).click();await click('确认演示');await page.waitForTimeout(1600);assert.equal(await page.locator('.order').count(),1);
+ await click('待收货');await click('模拟确认完成');await click('确认演示');await page.waitForTimeout(1600);assert.equal(await page.locator('.order-tabs .active').innerText(),'评价');
+ await click('退款/售后');await click('查看售后说明');await text('服务遇到问题，我们一起解决').waitFor();
+ await route('channel/index');await click('和平精英');await page.locator('.search input').fill('不存在');await text('没有找到话题').waitFor();await click('清除');await capture('02-channel');await page.locator('.topic').first().click();await text('讨论预览').waitFor();
+ await route('messages/index');await page.locator('.search input').fill('小鹿');await click('小鹿');await page.locator('.draft textarea').fill('你好，今晚一起玩吗？');await click('保存草稿');await page.waitForTimeout(1600);await page.locator('.back-button').click();await page.getByText('[草稿] 你好，今晚一起玩吗？',{exact:true}).waitFor();await capture('03-messages');
+ await route('profile/index');await capture('04-profile');await click('我的收藏');await page.locator('.product').first().click();await page.locator('[aria-label="取消收藏"]').click();await page.waitForTimeout(1600);await page.locator('.back-button').click();await text('还没有收藏').waitFor();
+ await route('services/index');await capture('07-services');await click('积分中心');await text('860 积分 · 示例').waitFor();
+ await route('profile/index');await page.locator('[aria-label="设置"]').click();await click('退出演示账号');await click('确认演示');await text('点击登录游伴').waitFor();
+ await route('detail/index?kind=balance');await text('请先登录演示账号查看').waitFor();
+ await page.setViewportSize({width:320,height:740});await route('home/index');await capture('home-320');
+ await page.setViewportSize({width:1440,height:1000});await route('home/index');await capture('home-desktop');
+ assert.deepEqual(errors,[]);console.log('PASS: navigation, 4 shortcuts, filters, empty states, agreement gate, return-to-origin, orders, draft, favorites, sign-out, protected deep link, responsive layouts.');
+ await browser.close();
+})().catch(e=>{console.error(e);process.exit(1)});

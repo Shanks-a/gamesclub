@@ -1,0 +1,20 @@
+{
+ "pages": [
+  {"path":"pages/home/index","style":{"navigationBarTitleText":"游伴 CLUB"}},
+  {"path":"pages/channel/index","style":{"navigationBarTitleText":"频道"}},
+  {"path":"pages/messages/index","style":{"navigationBarTitleText":"会话"}},
+  {"path":"pages/profile/index","style":{"navigationBarTitleText":"我的"}},
+  {"path":"pages/specials/index","style":{"navigationBarTitleText":"限时特价"}},
+  {"path":"pages/orders/index","style":{"navigationBarTitleText":"我的订单"}},
+  {"path":"pages/services/index","style":{"navigationBarTitleText":"服务中心"}},
+  {"path":"pages/login/index","style":{"navigationBarTitleText":"登录"}},
+  {"path":"pages/detail/index","style":{"navigationBarTitleText":"详情"}}
+ ],
+ "globalStyle":{"navigationStyle":"custom","backgroundColor":"#F6F5F2","navigationBarTextStyle":"black","navigationBarBackgroundColor":"#F6F5F2"},
+ "tabBar":{"color":"#747486","selectedColor":"#8875AA","backgroundColor":"#EFEDF3","borderStyle":"white","list":[
+  {"pagePath":"pages/home/index","text":"首页","iconPath":"static/icons/home.png","selectedIconPath":"static/icons/home-active.png"},
+  {"pagePath":"pages/channel/index","text":"频道","iconPath":"static/icons/channel.png","selectedIconPath":"static/icons/channel-active.png"},
+  {"pagePath":"pages/messages/index","text":"消息","iconPath":"static/icons/message.png","selectedIconPath":"static/icons/message-active.png"},
+  {"pagePath":"pages/profile/index","text":"我的","iconPath":"static/icons/user.png","selectedIconPath":"static/icons/user-active.png"}
+ ]}
+}
