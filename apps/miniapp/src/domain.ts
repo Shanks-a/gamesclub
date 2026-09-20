@@ -1,6 +1,6 @@
 export type Game = '王者荣耀' | '和平精英' | '无畏契约' | '英雄联盟'
 export const games: Game[] = ['王者荣耀', '和平精英', '无畏契约', '英雄联盟']
-export interface Product { id: string; title: string; game: Game; price: number; original: number; art: number; tagline: string }
+export interface Product { id: string; title: string; game: Game; price: number; original: number; art: number; tagline: string; version?: number }
 export const products: Product[] = [
  { id:'duo', title:'双人默契上分', game:'王者荣耀', price:2900, original:3900, art:0, tagline:'默契配合，一起享受每一局' },
  { id:'chicken', title:'一起轻松吃鸡', game:'和平精英', price:2500, original:3500, art:1, tagline:'轻松交流，发现组队的快乐' },

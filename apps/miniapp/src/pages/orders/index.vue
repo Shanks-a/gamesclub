@@ -6,13 +6,14 @@ import EmptyState from '../../components/EmptyState.vue'
 import { orderTabs, products, money, type OrderTab } from '../../domain'
 import { demo,actOrder } from '../../store'
 import { requireLogin,detail,confirmDemo,notify } from '../../navigation'
+import { listOrders,mockPay,cancelOrder } from '../../services/orders'
 const tab=ref<OrderTab>('待付款')
-onLoad(q=>{if(orderTabs.includes(q?.tab as OrderTab))tab.value=q!.tab as OrderTab})
+onLoad(async q=>{if(orderTabs.includes(q?.tab as OrderTab))tab.value=q!.tab as OrderTab;if(demo.loggedIn){try{const remote=await listOrders();demo.orders=remote.map(o=>({id:String(o.id),productId:String(o.product),quantity:o.quantity,tab:o.status==='PENDING_PAYMENT'?'待付款':o.status==='PENDING_ARRANGEMENT'?'待发货':'退款/售后'} as any))}catch(e){notify((e as Error).message)}}})
 const list=computed(()=>demo.orders.filter(o=>!o.cancelled&&o.tab===tab.value).map(o=>({...o,product:products.find(p=>p.id===o.productId)!})))
 async function action(id:string,kind:'cancel'|'pay'|'receive'|'review') {
  const copy={cancel:['取消演示订单','仅取消本地示例订单，不影响任何真实订单。'],pay:['模拟付款','不会扣款；仅演示付款后的订单页面。该分类不代表正式后端状态映射。'],receive:['模拟确认完成','仅更新演示订单，不代表真实服务交付或验收。'],review:['提交演示评价','将此示例标记为已评价，不会发布到任何平台。']}
  if(!await confirmDemo(copy[kind][0],copy[kind][1]))return
- try{actOrder(id,kind);if(kind==='pay')tab.value='待发货';if(kind==='receive')tab.value='评价';notify('演示状态已更新')}catch(e){notify((e as Error).message)}
+ try{if(kind==='pay')await mockPay(Number(id),`pay-${id}-${Date.now()}`);else if(kind==='cancel')await cancelOrder(Number(id));else actOrder(id,kind);if(kind==='pay')tab.value='待发货';if(kind==='receive')tab.value='评价';notify('订单状态已更新')}catch(e){notify((e as Error).message)}
 }
 </script>
 <template><PageShell title="我的订单" backable><view class="body">

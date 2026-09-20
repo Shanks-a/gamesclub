@@ -1,0 +1,11 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: gamesclub
+      POSTGRES_USER: gamesclub
+      POSTGRES_PASSWORD: gamesclub
+    ports: ["5432:5432"]
+    volumes: ["gamesclub_pgdata:/var/lib/postgresql/data"]
+volumes:
+  gamesclub_pgdata:

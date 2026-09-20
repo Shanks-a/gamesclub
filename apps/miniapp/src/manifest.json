@@ -1,5 +1,5 @@
 {
- "name": "游伴 CLUB", "appid": "", "description": "游戏陪玩俱乐部基础页面交互演示",
+ "name": "游伴 CLUB", "appid": "wxff3ef2ba9d6cba1e", "description": "游戏陪玩俱乐部基础页面交互演示",
  "versionName": "0.1.0", "versionCode": "100", "transformPx": false,
  "vueVersion": "3", "uniStatistics": { "enable": false },
  "mp-weixin": { "appid": "", "setting": { "urlCheck": true, "es6": true, "minified": true }, "usingComponents": true },

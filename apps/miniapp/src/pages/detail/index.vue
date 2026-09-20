@@ -8,6 +8,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import { products,topics,conversations,money } from '../../domain'
 import { demo,toggleFavorite,logoutDemo,createDemoOrder } from '../../store'
 import { go,detail,requireLogin,confirmDemo,notify } from '../../navigation'
+import { createOrder } from '../../services/orders'
 const kind=ref(''),id=ref(''),quantity=ref(1),draft=ref(''),busy=ref(false)
 const titles:Record<string,string>={product:'服务详情',topic:'频道话题',chat:'会话详情',favorites:'我的收藏',balance:'余额明细',points:'积分中心',join:'我要加入',lottery:'活动抽奖',process:'下单流程',support:'客服中心',assessment:'考核中心',membership:'会员中心',settings:'设置',notifications:'通知',account:'个人信息',terms:'用户协议',privacy:'隐私政策',games:'更多游戏',aftersale:'退款与售后'}
 const protectedKinds=['chat','favorites','balance','points','join','notifications','account']
@@ -30,7 +31,7 @@ const info:Record<string,{icon:string;title:string;body:string}>={
  terms:{icon:'order',title:'用户协议 · 演示说明',body:'正式用户协议尚未发布。此页面用于验证协议阅读与勾选交互；不接受付款，不提供真实交易，不构成正式服务协议。'},
  privacy:{icon:'order',title:'隐私政策 · 演示说明',body:'正式隐私政策尚未发布。本地演示仅保存演示登录标记和收藏，不获取微信身份、手机号或通讯录，也不向服务器传输会话。'},
 }
-async function order(){if(!demo.loggedIn){requireLogin('detail',{kind:'product',id:id.value});return}if(busy.value||!product.value)return;if(!await confirmDemo('创建演示订单','只创建本地示例记录，不提交预约或真实订单；实际预约表单将在业务接入阶段补充。'))return;busy.value=true;try{createDemoOrder(product.value.id,quantity.value);go('orders',{tab:'待付款'})}catch(e){notify((e as Error).message)}finally{busy.value=false}}
+async function order(){if(!demo.loggedIn){requireLogin('detail',{kind:'product',id:id.value});return}if(busy.value||!product.value)return;if(!await confirmDemo('创建订单','将按服务端当前价格创建订单，暂不涉及真实支付。'))return;busy.value=true;try{await createOrder(product.value.id,quantity.value,product.value.version||1,`create-${Date.now()}`);go('orders',{tab:'待付款'})}catch(e){notify((e as Error).message)}finally{busy.value=false}}
 function favorite(){if(!demo.loggedIn){requireLogin('detail',{kind:'product',id:id.value});return}toggleFavorite(id.value);notify(demo.favorites.includes(id.value)?'已加入演示收藏':'已取消收藏')}
 function saveDraft(){if(!draft.value.trim()){notify('请先输入草稿内容');return}demo.drafts[id.value]=draft.value.trim();notify('草稿仅保存在本次会话中，未发送')}
 async function logout(){if(await confirmDemo('退出演示账号','退出后清空本次演示订单修改、会话草稿及演示收藏。')){logoutDemo();go('profile')}}

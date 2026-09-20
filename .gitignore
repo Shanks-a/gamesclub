@@ -2,6 +2,7 @@ frontend/node_modules/
 frontend/dist/
 frontend/.pnpm-store/
 *.log
+*.sqlite3
 __pycache__/
 .env
 !*.example
