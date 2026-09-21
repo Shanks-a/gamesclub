@@ -23,7 +23,7 @@ function bannerClick(i:number){if(i===1)go('channel');else go('specials')}
    <view class="shortcuts"><button class="ui-btn" v-for="item in shortcuts" :key="item.id" @click="detail(item.id)"><AppIcon :name="item.icon" active/><text>{{item.title}}</text></button></view>
    <view class="section-head"><text class="heading">限时特价</text><button class="ui-btn link" @click="go('specials',{game:selected==='推荐'?'全部':selected})">更多 ›</button></view>
    <view v-if="list.length" class="grid"><ProductCard v-for="p in list.slice(0,2)" :key="p.id" :product="p"/></view><EmptyState v-else title="没有找到相关商品" description="换个关键词，或选择其他游戏试试。"/>
-   <view class="section-head"><text class="heading">人气热选</text><button class="ui-btn link" @click="go('specials')">查看全部 ›</button></view>
+   <view class="section-head"><text class="heading">人气热选</text><button class="ui-btn link" @click="go('popular')">查看全部 ›</button></view>
    <view class="stack"><ProductCard v-for="p in list.slice(-2)" :key="p.id" :product="p" horizontal/></view>
    <view class="footnote">热爱游戏，也热爱相遇</view>
   </view>

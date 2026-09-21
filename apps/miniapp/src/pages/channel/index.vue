@@ -10,7 +10,7 @@ const list=computed(()=>topics.filter(t=>(selected.value==='全部'||t.game===se
 </script>
 <template><PageShell title="频道" subtitle="找到同好，一起开局">
  <view class="search-wrap"><view class="search"><AppIcon name="search" :size="20"/><input v-model="query" placeholder="搜索频道、游戏或感兴趣的话题"/><button v-if="query" class="ui-btn clear" @click="query=''">清除</button></view></view>
- <view class="channel-layout"><view class="sidebar"><button class="ui-btn" v-for="game in ['全部',...games]" :key="game" :class="{chosen:selected===game}" @click="selected=game">{{game}}</button><button class="ui-btn" @click="detail('games')">更多游戏</button></view>
+ <view class="channel-layout"><view class="sidebar"><button class="ui-btn" v-for="game in ['全部',...games]" :key="game" :class="{chosen:selected===game}" @click="selected=game">{{game}}</button></view>
   <view class="channel-content"><view class="heading">{{selected==='全部'?'发现同好':selected}}</view><view class="small muted intro">同频玩家 · 快乐组队</view>
    <view class="soft banner" @click="detail('topic',list[0]?.id || '0-0')"><view class="heading">今晚，一起冲分</view><view class="small muted">进入组队话题，寻找默契队友</view><view class="accent small">去组队 →</view></view>
    <view class="heading topic-heading">发现频道</view>

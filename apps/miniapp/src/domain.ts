@@ -47,3 +47,4 @@ export const conversations = [
  { id:'helper', name:'游伴小助手', text:'欢迎加入，一起发现更多乐趣', time:'昨天', unread:0, color:'purple' },
  { id:'group', name:'周末开黑小队', text:'橘子：今晚有人一起吗？', time:'周一', unread:0, color:'blue' },
 ]
+export interface ChatMessage { id:string; mine:boolean; text:string; time:string }
