@@ -27,6 +27,20 @@
 
 并通过源码搜索确认项目样式中不再存在 `.stack>*+*` 或其他同类通用选择器。修改源样式后需要重新构建，不能只修改 `dist` 中生成的 `app.wxss`。
 
+## 本地演示登录：request 合法域名校验错误
+
+### 错误表现
+
+微信开发者工具调用 `http://127.0.0.1:8000/api/v1/auth/dev-login/` 时提示该地址不在 request 合法域名列表中，演示登录失败。
+
+### 根本原因
+
+微信小程序默认开启 request 合法域名校验，本地 HTTP 地址没有配置在微信公众平台合法域名中。
+
+### 处理方式
+
+开发环境在 `apps/miniapp/src/manifest.json` 中设置 `mp-weixin.setting.urlCheck` 为 `false`，重新构建并导入开发者工具。生产环境必须恢复为 `true`，使用 HTTPS API 地址，并在微信公众平台配置合法 request 域名。
+
 ## WXSS 编译错误：`error at token *`
 
 ### 错误表现
