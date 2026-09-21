@@ -1,5 +1,32 @@
 # 小程序构建错误记录
 
+## WXSS 编译错误：`error at token *`（公共样式）
+
+### 错误表现
+
+微信开发者工具在生成的 `app.wxss` 第 5 行提示 `error at token '*'`，定位到公共样式中的：
+
+```css
+.stack>*+*{margin-top:24rpx}
+```
+
+### 根本原因
+
+微信 WXSS 编译器不支持这里使用的通用选择器 `*`。
+
+### 修复方式
+
+已在 `apps/miniapp/src/styles.css` 中改为明确的元素组合选择器：
+
+```css
+.stack > view + view,
+.stack > button + button,
+.stack > button + view,
+.stack > view + button { margin-top: 24rpx; }
+```
+
+并通过源码搜索确认项目样式中不再存在 `.stack>*+*` 或其他同类通用选择器。修改源样式后需要重新构建，不能只修改 `dist` 中生成的 `app.wxss`。
+
 ## WXSS 编译错误：`error at token *`
 
 ### 错误表现
