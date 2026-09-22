@@ -1,10 +1,10 @@
 from rest_framework.test import APITestCase
 from django.test import override_settings
-from .models import GamePartition, Product, Order
+from .models import GamePartition, Product, ProductCategory, Order
 @override_settings(DEBUG=True)
 class FlowTests(APITestCase):
     def setUp(self):
-        game=GamePartition.objects.create(name='王者荣耀'); self.product=Product.objects.create(game=game,title='测试服务',price_cents=2900,original_price_cents=3900)
+        game=GamePartition.objects.create(name='王者荣耀'); category=ProductCategory.objects.create(game=game,name='娱乐单'); self.product=Product.objects.create(game=game,category=category,title='测试服务',price_cents=2900,original_price_cents=3900)
     def login(self):
         response=self.client.post('/api/v1/auth/dev-login/',{},format='json'); self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access_token']}")
     def test_order_payment_and_snapshot(self):

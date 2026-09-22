@@ -2,18 +2,18 @@
 import { ref } from 'vue'
 import { back } from '../navigation'
 import AppIcon from './AppIcon.vue'
-withDefaults(defineProps<{title:string;subtitle?:string;backable?:boolean}>(),{backable:false})
+withDefaults(defineProps<{title:string;subtitle?:string;backable?:boolean;compact?:boolean}>(),{backable:false,compact:false})
 const top=ref(20), navHeight=ref(48)
 // #ifdef MP-WEIXIN
-const system=uni.getSystemInfoSync();top.value=system.statusBarHeight || 20
+const system=typeof uni.getWindowInfo === 'function' ? uni.getWindowInfo() : uni.getSystemInfoSync();top.value=system.statusBarHeight || 20
 const menu=uni.getMenuButtonBoundingClientRect();navHeight.value=(menu.top-top.value)*2+menu.height
 // #endif
 </script>
 <template>
  <view class="shell">
   <view :style="{height:top+'px'}" />
-  <view class="mini-nav" :style="{height:navHeight+'px'}"><text class="demo-label">交互演示 · 非真实交易</text></view>
-  <view class="page-heading between">
+  <view v-if="!compact" class="mini-nav" :style="{height:navHeight+'px'}"><text class="demo-label">交互演示 · 非真实交易</text></view>
+  <view class="page-heading between" :style="compact ? {minHeight:navHeight+'px'} : {}">
    <view class="row gap"><button v-if="backable" class="ui-btn back-button" aria-label="返回" @click="back"><AppIcon name="back" /></button><text class="page-title">{{title}}</text></view>
    <view class="row gap"><slot name="actions" /></view>
   </view>

@@ -7,8 +7,8 @@ from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from .models import AccessToken, GamePartition, Product, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile
-from .serializers import GameSerializer, ProductSerializer, FavoriteSerializer, OrderSerializer, ProductWriteSerializer
+from .models import AccessToken, GamePartition, Product, ProductCategory, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile
+from .serializers import GameSerializer, CategorySerializer, ProductSerializer, FavoriteSerializer, OrderSerializer, ProductWriteSerializer
 
 def err(message, code, http=400):
     return Response({'error': {'code': code, 'message': message}}, status=http)
@@ -46,9 +46,11 @@ def games(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def products(request):
-    qs = Product.objects.filter(is_published=True, game__is_enabled=True).select_related('game')
+    qs = Product.objects.filter(is_published=True, game__is_enabled=True, category__is_enabled=True).select_related('game','category')
     game = request.query_params.get('game'); query = request.query_params.get('q')
     if game and game not in ('全部','推荐'): qs = qs.filter(game__name=game)
+    category_id = request.query_params.get('category_id')
+    if category_id: qs = qs.filter(category_id=category_id)
     if query: qs = qs.filter(Q(title__icontains=query) | Q(game__name__icontains=query))
     sort = request.query_params.get('sort'); qs = qs.order_by('price_cents' if sort == 'asc' else '-price_cents' if sort == 'desc' else 'id')
     return Response(ProductSerializer(qs, many=True).data)
@@ -59,6 +61,12 @@ def product_detail(request, pk):
     try: p = Product.objects.select_related('game').get(pk=pk)
     except Product.DoesNotExist: return err('商品不存在', 'NOT_FOUND', 404)
     return Response(ProductSerializer(p).data)
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def game_categories(request, pk):
+    qs = ProductCategory.objects.filter(game_id=pk, game__is_enabled=True, is_enabled=True)
+    return Response(CategorySerializer(qs, many=True).data)
 
 @api_view(['GET','POST'])
 def favorites(request):
@@ -123,6 +131,22 @@ def admin_ok(request): return request.user.is_staff or request.user.is_superuser
 def management_products(request):
     if not admin_ok(request): return err('无管理权限','FORBIDDEN',403)
     serializer=ProductWriteSerializer(data=request.data); serializer.is_valid(raise_exception=True); return Response(ProductSerializer(serializer.save()).data,status=201)
+
+@api_view(['GET','POST'])
+def management_categories(request):
+    if not admin_ok(request): return err('无管理权限','FORBIDDEN',403)
+    if request.method == 'GET':
+        return Response(CategorySerializer(ProductCategory.objects.select_related('game').all(), many=True).data)
+    serializer = CategorySerializer(data=request.data); serializer.is_valid(raise_exception=True)
+    return Response(CategorySerializer(serializer.save()).data, status=201)
+
+@api_view(['PATCH'])
+def management_category_detail(request, pk):
+    if not admin_ok(request): return err('无管理权限','FORBIDDEN',403)
+    try: category = ProductCategory.objects.get(pk=pk)
+    except ProductCategory.DoesNotExist: return err('商品类型不存在','NOT_FOUND',404)
+    serializer = CategorySerializer(category, data=request.data, partial=True); serializer.is_valid(raise_exception=True)
+    return Response(CategorySerializer(serializer.save(version=category.version+1)).data)
 @api_view(['PATCH'])
 def management_product_detail(request,pk):
     if not admin_ok(request): return err('无管理权限','FORBIDDEN',403)

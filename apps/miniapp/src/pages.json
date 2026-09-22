@@ -6,6 +6,7 @@
   {"path":"pages/profile/index","style":{"navigationBarTitleText":"我的"}},
  {"path":"pages/specials/index","style":{"navigationBarTitleText":"限时特价"}},
   {"path":"pages/popular/index","style":{"navigationBarTitleText":"人气热选"}},
+  {"path":"pages/game-products/index","style":{"navigationBarTitleText":"游戏商品"}},
   {"path":"pages/orders/index","style":{"navigationBarTitleText":"我的订单"}},
   {"path":"pages/services/index","style":{"navigationBarTitleText":"服务中心"}},
   {"path":"pages/login/index","style":{"navigationBarTitleText":"登录"}},
