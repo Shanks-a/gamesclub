@@ -11,3 +11,5 @@ dist/
 .pnpm-store/
 project.private.config.json
 test-results/
+backend/media/
+backend/.venv/

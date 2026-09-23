@@ -1,33 +1,24 @@
 import { reactive } from 'vue'
+import { clearAccessToken, request } from './api/client'
 import { seedOrders, changeDemoOrder, products, conversations, type DemoOrder, type ChatMessage } from './domain'
 const KEY = 'gamesclub-local-data-v2'
 const defaultMessages:Record<string,ChatMessage[]> = Object.fromEntries(conversations.filter(c=>c.id!=='notice').map(c=>[c.id,[{id:`${c.id}-0`,mine:false,text:c.text,time:c.time}]]))
-export const demo = reactive({ loggedIn:false, favorites:['duo'] as string[], orders:seedOrders.map(o=>({...o})), read:[] as string[], drafts:{} as Record<string,string>, messages:defaultMessages })
+export const demo = reactive({ loggedIn:false, favorites:[] as string[], orders:[] as DemoOrder[], read:[] as string[], drafts:{} as Record<string,string>, messages:defaultMessages })
 export function restore() {
  try {
   const saved = uni.getStorageSync(KEY)
   if (!saved || saved.version !== 2) return
-  demo.loggedIn = saved.loggedIn === true
-  if (Array.isArray(saved.favorites)) demo.favorites = saved.favorites.filter((id: unknown) => products.some(p=>p.id===id))
-  if (Array.isArray(saved.orders)) {
-   demo.orders = saved.orders.filter((order: unknown): order is DemoOrder => {
-    if (!order || typeof order !== 'object') return false
-    const value = order as Partial<DemoOrder>
-    const quantity = value.quantity
-    return typeof value.id === 'string' && products.some(p=>p.id===value.productId) &&
-      typeof quantity === 'number' && Number.isInteger(quantity) && quantity >= 1 && quantity <= 5 &&
-      typeof value.tab === 'string' && (['待付款','待发货','待收货','评价','退款/售后'] as string[]).includes(value.tab)
-   }).map((order: DemoOrder)=>({...order}))
-  }
+  demo.loggedIn = false
   if (saved.messages && typeof saved.messages === 'object') demo.messages = saved.messages
  } catch { /* A disabled device store must not prevent browsing. */ }
 }
 export function persist() {
- try { uni.setStorageSync(KEY, {version:2, loggedIn:demo.loggedIn, favorites:demo.favorites, orders:demo.orders, messages:demo.messages}) }
+ try { uni.setStorageSync(KEY, {version:2, messages:demo.messages}) }
  catch { uni.showToast({ title:'设备存储不可用，本次操作仅在当前会话有效', icon:'none' }) }
 }
 export function loginDemo() { demo.loggedIn=true; persist() }
-export function logoutDemo() { demo.loggedIn=false; demo.drafts={}; demo.read=[]; persist() }
+export function logoutDemo() { clearAccessToken(); demo.loggedIn=false; demo.favorites=[]; demo.orders=[]; demo.messages={}; demo.drafts={}; demo.read=[]; persist() }
+export async function validateSession(){try{await request('/me/');demo.loggedIn=true}catch(e){logoutDemo();throw e}}
 export function toggleFavorite(id: string) { if (!products.some(p=>p.id===id)) return; demo.favorites=demo.favorites.includes(id)?demo.favorites.filter(v=>v!==id):[...demo.favorites,id]; persist() }
 export function actOrder(id: string, action: Parameters<typeof changeDemoOrder>[1]) {
  if (!demo.loggedIn) throw new Error('请先进入演示登录')

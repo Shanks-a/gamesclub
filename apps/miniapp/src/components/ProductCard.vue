@@ -5,7 +5,7 @@ defineProps<{product:Product;horizontal?:boolean}>()
 </script>
 <template>
  <button class="ui-btn product" :class="{horizontal}" @click="detail('product',product.id)">
-  <view class="cover"><image :src="`/static/art/product-${product.art}.png`" mode="aspectFill" class="art"/><text v-if="!horizontal" class="badge">特惠</text></view>
+  <view class="cover"><image :src="product.cover || `/static/art/product-${product.art}.png`" mode="aspectFill" class="art"/><text v-if="!horizontal && product.original>product.price" class="badge">特惠</text></view>
   <view class="product-text"><view class="name">{{product.title}}</view><view class="desc">{{product.game}} · 1小时</view><view class="price">¥{{money(product.price)}}<text v-if="!horizontal" class="old">¥{{money(product.original)}}</text><text v-else class="unit"> / 小时</text></view></view>
  </button>
 </template>

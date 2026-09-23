@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref,computed,nextTick } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import PageShell from '../../components/PageShell.vue'
 import ProductCard from '../../components/ProductCard.vue'
 import AppIcon from '../../components/AppIcon.vue'
@@ -9,16 +9,23 @@ import { products,topics,conversations,money } from '../../domain'
 import { demo,toggleFavorite,logoutDemo,appendMessage } from '../../store'
 import { go,detail,requireLogin,confirmDemo,notify } from '../../navigation'
 import { createOrder } from '../../services/orders'
+import { getProduct } from '../../services/catalog'
+import { listFavorites, addFavorite, removeFavorite } from '../../services/favorites'
+import { request } from '../../api/client'
+import type { Product } from '../../domain'
 const kind=ref(''),id=ref(''),quantity=ref(1),chatInput=ref(''),busy=ref(false)
 const titles:Record<string,string>={product:'服务详情',topic:'频道话题',chat:'会话详情',favorites:'我的收藏',balance:'余额明细',points:'积分中心',join:'我要加入',lottery:'活动抽奖',process:'下单流程',support:'客服中心',assessment:'考核中心',membership:'会员中心',settings:'设置',notifications:'通知',account:'个人信息',terms:'用户协议',privacy:'隐私政策',games:'更多游戏',aftersale:'退款与售后'}
 const protectedKinds=['chat','favorites','balance','points','join','notifications','account']
 const blocked=computed(()=>protectedKinds.includes(kind.value)&&!demo.loggedIn)
 onLoad(q=>{kind.value=q?.kind||'';id.value=q?.id||'';if(!blocked.value&&kind.value==='chat'&&!demo.read.includes(id.value))demo.read.push(id.value);if(kind.value==='notifications'&&demo.loggedIn&&!demo.read.includes('notice'))demo.read.push('notice')})
-const product=computed(()=>products.find(p=>p.id===id.value))
+const product=ref<Product>()
+const remoteFavorites=ref<Product[]>([])
+const loadError=ref('')
+onShow(async()=>{loadError.value='';try{if(kind.value==='product'){product.value=await getProduct(id.value);quantity.value=product.value.minQuantity||1}if(demo.loggedIn){remoteFavorites.value=await listFavorites();demo.favorites=remoteFavorites.value.map(p=>p.id)}}catch(e){loadError.value=(e as Error).message;notify(loadError.value)}})
 const topic=computed(()=>topics.find(t=>t.id===id.value))
 const chat=computed(()=>conversations.find(c=>c.id===id.value))
 const chatMessages=computed(()=>demo.messages[id.value]||[])
-const favoriteList=computed(()=>products.filter(p=>demo.favorites.includes(p.id)))
+const favoriteList=computed(()=>remoteFavorites.value)
 const steps=[['01','选择游戏与服务','查看服务内容、计费单位及价格，选择适合自己的商品。'],['02','提交预约与付款','正式流程需填写预约时段与服务需求；付款仅代表提交申请。'],['03','运营安排 · 队友确认','人员足额接受后才预约成功，调整安排需与你确认。'],['04','完成服务 · 验收评价','服务结束后确认交付；如有问题，可联系工作人员处理。']]
 const info:Record<string,{icon:string;title:string;body:string}>={
  lottery:{icon:'gift',title:'好玩的活动，正在准备',body:'活动抽奖入口已预留。参与条件、奖品和开奖规则尚未确定，目前不开放抽奖。'},
@@ -32,15 +39,15 @@ const info:Record<string,{icon:string;title:string;body:string}>={
  terms:{icon:'order',title:'用户协议 · 演示说明',body:'正式用户协议尚未发布。此页面用于验证协议阅读与勾选交互；不接受付款，不提供真实交易，不构成正式服务协议。'},
  privacy:{icon:'order',title:'隐私政策 · 演示说明',body:'正式隐私政策尚未发布。本地演示仅保存演示登录标记和收藏，不获取微信身份、手机号或通讯录，也不向服务器传输会话。'},
 }
-async function order(){if(!demo.loggedIn){requireLogin('detail',{kind:'product',id:id.value});return}if(busy.value||!product.value)return;if(!await confirmDemo('创建订单','将按服务端当前价格创建订单，暂不涉及真实支付。'))return;busy.value=true;try{await createOrder(product.value.id,quantity.value,product.value.version||1,`create-${Date.now()}`);go('orders',{tab:'待付款'})}catch(e){notify((e as Error).message)}finally{busy.value=false}}
-function favorite(){if(!demo.loggedIn){requireLogin('detail',{kind:'product',id:id.value});return}toggleFavorite(id.value);notify(demo.favorites.includes(id.value)?'已加入演示收藏':'已取消收藏')}
+async function order(){if(!demo.loggedIn){requireLogin('detail',{kind:'product',id:id.value});return}if(busy.value||!product.value||!product.value.available)return;if(!await confirmDemo('创建订单','将按服务端当前价格创建订单，暂不涉及真实支付。'))return;busy.value=true;try{await createOrder(product.value.id,quantity.value,product.value.version||1,`create-${Date.now()}`);go('orders',{tab:'待付款'})}catch(e){notify((e as Error).message)}finally{busy.value=false}}
+async function favorite(){if(!demo.loggedIn){requireLogin('detail',{kind:'product',id:id.value});return}try{if(demo.favorites.includes(id.value))await removeFavorite(id.value);else await addFavorite(id.value);remoteFavorites.value=await listFavorites();demo.favorites=remoteFavorites.value.map(p=>p.id);notify('收藏已同步')}catch(e){notify((e as Error).message)}}
 async function sendMessage(){const value=chatInput.value.trim();if(!value)return;appendMessage(id.value,value);chatInput.value='';await nextTick()}
-async function logout(){if(await confirmDemo('退出演示账号','退出后清理本机登录会话、草稿和未读状态，服务端订单不会删除。')){logoutDemo();go('profile')}}
+async function logout(){if(await confirmDemo('退出演示账号','退出后清理本机登录会话、草稿和未读状态，服务端订单不会删除。')){try{await request('/auth/logout/',{method:'POST'})}catch(e){notify((e as Error).message)}finally{logoutDemo();go('profile')}}}
 </script>
 <template><PageShell :title="titles[kind]||'页面未找到'" backable><view class="body safe-bottom">
  <view v-if="blocked" class="blank-page"><text class="muted">请先登录演示账号查看</text><button class="ui-btn primary" @click="requireLogin('detail',{kind,id})">演示登录</button></view>
- <template v-else-if="kind==='product'&&product"><image :src="`/static/art/product-${product.art}.png`" class="detail-cover" mode="aspectFill"/><view class="section-head"><view><view class="title">{{product.title}}</view><view class="small muted">{{product.game}} · 1小时</view></view><button class="ui-btn" :aria-label="demo.favorites.includes(id)?'取消收藏':'收藏商品'" @click="favorite"><AppIcon name="star" :active="demo.favorites.includes(id)"/></button></view><view class="price">¥{{money(product.price)}}<text class="old">¥{{money(product.original)}}</text></view><view class="card description"><view class="heading">一起享受游戏的快乐</view><view class="muted paragraph">{{product.tagline}}。服务内容、人员安排与预约时段需在正式下单前确认。</view><view class="between"><text>演示购买数量</text><view class="row gap"><button class="ui-btn quantity" :disabled="quantity<=1" @click="quantity--">−</button><text>{{quantity}}</text><button class="ui-btn quantity" :disabled="quantity>=5" @click="quantity++">＋</button></view></view></view><view class="demo-note">这里只验证商品到订单的页面流程，不创建真实预约，不保证上分结果。</view><button class="ui-btn primary wide" :disabled="busy" @click="order">创建演示订单 · ¥{{money(product.price*quantity)}}</button></template>
- <template v-else-if="kind==='favorites'"><view class="demo-note">收藏会保存在当前设备，退出演示账号后重置。</view><view class="grid"><ProductCard v-for="p in favoriteList" :key="p.id" :product="p"/></view><EmptyState v-if="!favoriteList.length" title="还没有收藏" description="在服务详情中点击星标，留下你喜欢的商品。"/></template>
+ <template v-else-if="kind==='product'&&product"><image :src="product.cover" class="detail-cover" mode="aspectFill"/><view class="section-head"><view><view class="title">{{product.title}}</view><view class="small muted">{{product.game}} · 1小时</view></view><button class="ui-btn" :aria-label="demo.favorites.includes(id)?'取消收藏':'收藏商品'" @click="favorite"><AppIcon name="star" :active="demo.favorites.includes(id)"/></button></view><view class="price">¥{{money(product.price)}}<text class="old">¥{{money(product.original)}}</text></view><view class="card description"><view class="heading">一起享受游戏的快乐</view><view class="muted paragraph">{{product.tagline}}。服务内容、人员安排与预约时段需在正式下单前确认。</view><view class="between"><text>演示购买数量</text><view class="row gap"><button class="ui-btn quantity" :disabled="quantity<=(product.minQuantity||1)" @click="quantity--">−</button><text>{{quantity}}</text><button class="ui-btn quantity" :disabled="quantity>=(product.maxQuantity||1)" @click="quantity++">＋</button></view></view></view><view class="demo-note">这里只验证商品到订单的页面流程，不创建真实预约，不保证上分结果。</view><button class="ui-btn primary wide" :disabled="busy||!product.available" @click="order">{{product.available?'创建模拟订单':'商品不可售'}} · ¥{{money(product.price*quantity)}}</button></template>
+ <template v-else-if="kind==='favorites'"><view class="demo-note">收藏保存在服务端，重新登录仍可查看。</view><view class="grid"><ProductCard v-for="p in favoriteList" :key="p.id" :product="p"/></view><EmptyState v-if="!favoriteList.length" title="还没有收藏" description="在服务详情中点击星标，留下你喜欢的商品。"/></template>
  <template v-else-if="kind==='topic'&&topic"><view class="topic-detail"><text class="small accent"># {{topic.game}}</text><view class="title">{{topic.title}}</view><view class="small muted">{{topic.author}} · {{topic.count}} 条讨论 · 示例</view><view class="paragraph">{{topic.body}}</view><view class="divider"/><view class="heading">讨论预览</view><view class="sample-comment"><text class="accent">小满</text><view>一起友好交流，快乐游戏～</view></view><view class="demo-note">话题与回复均为示例，发布和实时互动尚未开放。</view></view></template>
  <template v-else-if="kind==='chat'&&chat"><view class="chat-page"><view class="row gap chat-header"><view :class="['avatar',chat.color]">{{chat.name.slice(0,1)}}</view><view><view class="heading">{{chat.name}}</view><view class="small muted">示例会话 · 消息仅保存在本机</view></view></view><scroll-view scroll-y class="chat-list"><view v-for="message in chatMessages" :key="message.id" :class="['message-row',message.mine?'mine':'theirs']"><view class="message-time">{{message.time}}</view><view class="message-bubble">{{message.text}}</view></view><view v-if="!chatMessages.length" class="chat-empty muted">开始和{{chat.name}}聊天吧</view></scroll-view><view class="chat-composer"><input v-model="chatInput" class="chat-input" confirm-type="send" placeholder="输入消息" maxlength="300" @confirm="sendMessage"/><button class="ui-btn send-button" :disabled="!chatInput.trim()" @click="sendMessage">发送</button></view></view></template>
  <template v-else-if="kind==='process'"><view class="demo-note">了解从下单到完成服务的四个步骤。</view><view class="stack"><view v-for="step in steps" :key="step[0]" class="card"><text class="step-number">{{step[0]}}</text><view class="heading">{{step[1]}}</view><view class="muted paragraph">{{step[2]}}</view></view></view></template>

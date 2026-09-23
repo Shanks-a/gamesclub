@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { filterProducts,changeDemoOrder,seedOrders,money } from '../src/domain.ts'
+import { filterProducts,changeDemoOrder,seedOrders,money,products,offlineExampleProducts } from '../src/domain.ts'
 test('filters combine game and query without altering catalog order',()=>{
+ products.splice(0,products.length,...offlineExampleProducts)
  assert.equal(filterProducts('王者荣耀','双人')[0]?.id,'duo')
  assert.equal(filterProducts('和平精英','双人').length,0)
  assert.equal(filterProducts('全部','不存在').length,0)

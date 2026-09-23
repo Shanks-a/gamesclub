@@ -7,7 +7,8 @@ import ProductCard from '../../components/ProductCard.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import { games, filterProducts } from '../../domain'
 import { go, detail } from '../../navigation'
-import { request } from '../../api/client'
+import { request, mediaUrl } from '../../api/client'
+import { loadCatalog, toProduct } from '../../services/catalog'
 import type { ApiCategory, ApiGame, ApiProduct } from '../../api/types'
 import type { Product } from '../../domain'
 const selected=ref('推荐'), query=ref(''), searching=ref(false)
@@ -18,23 +19,40 @@ const selectedCategory=ref(0)
 const shortcuts=[{title:'活动抽奖',icon:'gift',id:'lottery'},{title:'下单流程',icon:'order',id:'process'},{title:'客服中心',icon:'headset',id:'support'},{title:'考核中心',icon:'assessment',id:'assessment'}]
 const banners=[{eyebrow:'WEEKEND TOGETHER',title:'开黑，更有默契',sub:'发现你的下一位游戏搭子',cta:'探索好搭子',art:3},{eyebrow:'PLAY WITH FRIENDS',title:'找到你的同频玩家',sub:'聊聊热爱，一起快乐开局',cta:'进入频道',art:1},{eyebrow:'SPECIAL FOR YOU',title:'好价开局，快乐加倍',sub:'看看今天的精选特价服务',cta:'发现好价',art:2}]
 function bannerClick(i:number){if(i===1)go('channel');else go('specials')}
-const toProduct=(p:ApiProduct):Product=>({id:String(p.id),title:p.title,game:p.game.name as Product['game'],price:p.price_cents,original:p.original_price_cents,art:Number((p.cover_url.match(/product-(\d+)/)||[])[1]||0),tagline:p.description||'一起享受游戏的快乐',version:p.version})
+let sequence=0
+const homeEntries=ref<any[]>([])
+const configuredSpecials=computed(()=>homeEntries.value.filter(e=>e.kind==='special'&&e.product_detail).map(e=>toProduct(e.product_detail)))
+const configuredPopular=computed(()=>homeEntries.value.filter(e=>e.kind==='popular'&&e.product_detail).map(e=>toProduct(e.product_detail)))
+const configuredBanners=computed(()=>homeEntries.value.filter(e=>e.kind==='banner'))
 async function loadGame(gameName:string){
+ const run=++sequence; const chosen=selectedCategory.value
  gameLoading.value=true; gameError.value=''
- try {const games=await request<ApiGame[]>('/games/');const game=games.find(item=>item.name===gameName);if(!game)throw new Error('游戏分区暂不可用');gameCategories.value=await request<ApiCategory[]>(`/games/${game.id}/categories/`);if(!gameCategories.value.some(item=>item.id===selectedCategory.value))selectedCategory.value=0;const suffix=selectedCategory.value?`&category_id=${selectedCategory.value}`:'';const data=await request<ApiProduct[]>(`/products/?game=${encodeURIComponent(gameName)}${suffix}`);gameProducts.value=data.map(toProduct)} catch(error){gameProducts.value=[];gameError.value=error instanceof Error?error.message:'商品加载失败'} finally{gameLoading.value=false}
+ try {
+  const partitions=await request<ApiGame[]>('/games/')
+  const game=partitions.find(item=>item.name===gameName)
+  if(!game)throw new Error('游戏分区暂不可用')
+  const cats=await request<ApiCategory[]>('/games/'+game.id+'/categories/')
+  if(run!==sequence)return
+  gameCategories.value=cats
+  selectedCategory.value=cats.some(item=>item.id===chosen)?chosen:0
+  const suffix=selectedCategory.value?'&category_id='+selectedCategory.value:''
+  const data=await request<ApiProduct[]>('/products/?game='+encodeURIComponent(gameName)+suffix)
+  if(run===sequence)gameProducts.value=data.map(toProduct)
+ }catch(e){if(run===sequence){gameProducts.value=[];gameError.value=(e as Error).message}}
+ finally{if(run===sequence)gameLoading.value=false}
 }
-function selectGame(game:string){selected.value=game;query.value='';if(game!=='推荐')void loadGame(game)}
+function selectGame(game:string){++sequence;selected.value=game;query.value='';selectedCategory.value=0;gameCategories.value=[];gameProducts.value=[];if(game!=='推荐')void loadGame(game)}
 function selectCategory(id:number){selectedCategory.value=id;if(selected.value!=='推荐')void loadGame(selected.value)}
-onShow(()=>{if(selected.value!=='推荐')void loadGame(selected.value)})
+function openBanner(entry:any){if(entry.target==='product'&&entry.product)detail('product',String(entry.product));else if(entry.target==='game')selectGame(entry.game_name)}
+onShow(async()=>{try{await loadCatalog();homeEntries.value=await request<any[]>('/home/');if(selected.value!=='推荐')void loadGame(selected.value)}catch(e){gameError.value=(e as Error).message;uni.showToast({title:gameError.value,icon:'none'})}})
+
 </script>
 <template>
  <PageShell title="游伴 CLUB"><template #actions><button class="ui-btn" aria-label="搜索商品" @click="searching=!searching"><AppIcon name="search"/></button></template>
   <view class="body">
    <view v-if="searching" class="search"><AppIcon name="search" :size="20"/><input v-model="query" placeholder="搜索商品或游戏" :focus="searching"/><button v-if="query" class="ui-btn clear" @click="query=''">清除</button></view>
    <scroll-view scroll-x class="tabs-scroll"><view class="pills game-tabs"><button v-for="game in ['推荐',...games]" :key="game" class="ui-btn pill" :class="{active:selected===game}" @click="selectGame(game)">{{game}}</button></view></scroll-view>
-   <swiper v-if="selected==='推荐'" class="hero-swiper" circular autoplay :interval="4500" indicator-dots indicator-color="#c6bccf" indicator-active-color="#756784">
-    <swiper-item v-for="(banner,i) in banners" :key="banner.title"><view class="hero soft" @click="bannerClick(i)"><image :src="`/static/art/product-${banner.art}.png`" class="hero-art" mode="aspectFill"/><view class="hero-copy"><view class="eyebrow">{{banner.eyebrow}}</view><view class="hero-title">{{banner.title}}</view><view class="hero-sub">{{banner.sub}}</view><button class="ui-btn hero-button">{{banner.cta}}<text> →</text></button></view></view></swiper-item>
-   </swiper>
+   <swiper v-if="selected==='推荐' && configuredBanners.length" class="hero-swiper" circular autoplay indicator-dots><swiper-item v-for="entry in configuredBanners" :key="entry.id"><view class="hero soft" @click="openBanner(entry)"><image v-if="entry.image_url" :src="mediaUrl(entry.image_url)" class="hero-art" mode="aspectFill"/><view class="hero-copy"><view class="hero-title">{{entry.title}}</view></view></view></swiper-item></swiper>
    <view v-if="selected==='推荐'" class="shortcuts"><button class="ui-btn" v-for="item in shortcuts" :key="item.id" @click="detail(item.id)"><AppIcon :name="item.icon" active/><text>{{item.title}}</text></button></view>
    <template v-if="selected!=='推荐'">
     <view class="game-view-head"><view><view class="title">{{selected}}</view><view class="small muted">选择服务类型，直接浏览商品</view></view><text class="small muted">{{gameList.length}} 款</text></view>
@@ -46,9 +64,9 @@ onShow(()=>{if(selected.value!=='推荐')void loadGame(selected.value)})
    </template>
    <template v-else>
    <view class="section-head"><text class="heading">限时特价</text><button class="ui-btn link" @click="go('specials',{game:selected==='推荐'?'全部':selected})">更多 ›</button></view>
-   <view v-if="list.length" class="grid"><ProductCard v-for="p in list.slice(0,2)" :key="p.id" :product="p"/></view><EmptyState v-else title="没有找到相关商品" description="换个关键词，或选择其他游戏试试。"/>
+   <view v-if="configuredSpecials.length" class="grid"><ProductCard v-for="p in configuredSpecials" :key="p.id" :product="p"/></view><EmptyState v-else title="没有找到相关商品" description="换个关键词，或选择其他游戏试试。"/>
    <view class="section-head"><text class="heading">人气热选</text><button class="ui-btn link" @click="go('popular')">查看全部 ›</button></view>
-   <view class="stack"><ProductCard v-for="p in list.slice(-2)" :key="p.id" :product="p" horizontal/></view>
+   <view class="stack"><ProductCard v-for="p in configuredPopular" :key="p.id" :product="p" horizontal/></view>
    <view class="footnote">热爱游戏，也热爱相遇</view>
    </template>
   </view>

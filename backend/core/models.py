@@ -118,6 +118,8 @@ class OrderStatusHistory(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class PaymentAttempt(models.Model):
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['order'], condition=models.Q(status='SUCCEEDED'), name='one_successful_payment_per_order')]
     class Status(models.TextChoices): PENDING='PENDING'; SUCCEEDED='SUCCEEDED'; FAILED='FAILED'
     order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name='payments')
     idempotency_key = models.CharField(max_length=100, unique=True)
@@ -130,3 +132,24 @@ class IdempotencyRecord(models.Model):
     request_hash = models.CharField(max_length=64); response_json = models.JSONField(default=dict); status_code = models.PositiveSmallIntegerField(default=200)
     created_at = models.DateTimeField(auto_now_add=True)
     class Meta: constraints = [models.UniqueConstraint(fields=['user','key'], name='uniq_user_idempotency_key')]
+
+class HomeEntry(models.Model):
+    kind = models.CharField(max_length=16, choices=[('banner','轮播'),('special','特价'),('popular','人气')])
+    title = models.CharField(max_length=120)
+    image_url = models.CharField(max_length=255, blank=True)
+    product = models.ForeignKey(Product, null=True, blank=True, on_delete=models.PROTECT)
+    game = models.ForeignKey(GamePartition, null=True, blank=True, on_delete=models.PROTECT)
+    target = models.CharField(max_length=16, choices=[('product','商品'),('game','游戏'),('none','不跳转')], default='none')
+    sort_order = models.PositiveIntegerField(default=0)
+    is_enabled = models.BooleanField(default=True)
+    version = models.PositiveIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class AuditLog(models.Model):
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    action = models.CharField(max_length=32)
+    resource = models.CharField(max_length=64)
+    resource_id = models.CharField(max_length=80)
+    before = models.JSONField(default=dict)
+    after = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)

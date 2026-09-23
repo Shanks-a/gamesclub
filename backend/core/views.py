@@ -1,4 +1,4 @@
-import hashlib, json
+import hashlib, json, uuid
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -15,28 +15,36 @@ def err(message, code, http=400):
 def digest(data):
     return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 def get_idem(user, request, action):
+    get_user_model().objects.select_for_update().get(pk=user.pk)
+    action = action + ':' + request.path
     key = request.headers.get('Idempotency-Key')
-    if not key: return None, err('缺少 Idempotency-Key', 'IDEMPOTENCY_KEY_REQUIRED')
+    if not key or len(key) > 100: return None, err('需要长度不超过100的 Idempotency-Key', 'IDEMPOTENCY_KEY_REQUIRED')
     h = digest(request.data); old = IdempotencyRecord.objects.filter(user=user, key=key).first()
     if old:
         if old.request_hash != h or old.action != action: return None, err('幂等键已用于其他请求', 'IDEMPOTENCY_CONFLICT', 409)
         return old, Response(old.response_json, status=old.status_code)
-    return (key, h), None
+    return (key, h, action), None
 def save_idem(user, state, action, resource, response):
-    key, h = state
+    key, h, action = state
     IdempotencyRecord.objects.create(user=user, key=key, request_hash=h, action=action, resource_id=str(resource), response_json=response.data, status_code=response.status_code)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def dev_login(request):
-    if not settings.DEBUG: return err('开发登录未开放', 'DEV_LOGIN_DISABLED', 403)
+    if not settings.DEBUG or not settings.ALLOW_DEV_LOGIN: return err('开发登录未开放', 'DEV_LOGIN_DISABLED', 403)
     User = get_user_model(); user, _ = User.objects.get_or_create(username='dev-player'); UserProfile.objects.get_or_create(user=user)
     raw, _ = AccessToken.issue(user)
     return Response({'access_token': raw, 'user': {'id':user.id, 'nickname':user.profile.nickname, 'avatar_url':user.profile.avatar_url}})
 
 @api_view(['GET'])
 def me(request):
-    return Response({'id':request.user.id, 'nickname':request.user.profile.nickname, 'avatar_url':request.user.profile.avatar_url})
+    profile, _ = UserProfile.objects.get_or_create(user=request.user)
+    return Response({'id':request.user.id, 'nickname':profile.nickname, 'avatar_url':profile.avatar_url})
+
+@api_view(['POST'])
+def logout(request):
+    if isinstance(request.auth, AccessToken): request.auth.delete()
+    return Response({'ok':True})
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -83,17 +91,20 @@ def favorite_detail(request, product_id):
 def orders(request):
     if request.method == 'GET': return Response(OrderSerializer(Order.objects.filter(user=request.user).order_by('-created_at'), many=True).data)
     quantity = request.data.get('quantity'); expected = request.data.get('expected_product_version')
-    if not isinstance(quantity, int): return err('数量必须为整数', 'INVALID_QUANTITY')
+    if type(quantity) is not int: return err('数量必须为整数', 'INVALID_QUANTITY')
+    if set(request.data) - {'product_id','quantity','expected_product_version'}: return err('不接受自定义金额或其他字段', 'INVALID_FIELDS')
+    if type(request.data.get('product_id')) is not int: return err('商品编号必须为整数', 'INVALID_PRODUCT')
     with transaction.atomic():
-        try: p = Product.objects.select_for_update().select_related('game').get(pk=request.data.get('product_id'))
+        state, replay = get_idem(request.user, request, 'CREATE_ORDER')
+        if replay is not None: return replay
+        try: p = Product.objects.select_for_update().get(pk=request.data.get('product_id'))
         except Product.DoesNotExist: return err('商品不存在', 'NOT_FOUND', 404)
-        if not p.is_published or not p.game.is_enabled: return err('商品已下架', 'PRODUCT_UNAVAILABLE', 409)
+        game = GamePartition.objects.select_for_update().get(pk=p.game_id)
+        category = ProductCategory.objects.select_for_update().filter(pk=p.category_id).first()
+        if not p.is_published or not game.is_enabled or not category or not category.is_enabled or category.game_id != game.id: return err('商品已下架', 'PRODUCT_UNAVAILABLE', 409)
         if expected != p.version: return err('商品已更新，请重新确认价格', 'PRODUCT_VERSION_CONFLICT', 409)
         if quantity < p.min_quantity or quantity > p.max_quantity: return err('购买数量超出范围', 'INVALID_QUANTITY')
-        state, replay = get_idem(request.user, request, 'CREATE_ORDER')
-        if replay: return replay
-        key, h = state
-        order = Order.objects.create(order_no=f'GC{timezone.now():%Y%m%d%H%M%S}', user=request.user, product=p, game_name_snapshot=p.game.name, product_title_snapshot=p.title, cover_url_snapshot=p.cover_url, unit_price_cents=p.price_cents, total_amount_cents=p.price_cents*quantity, quantity=quantity)
+        order = Order.objects.create(order_no='GC'+uuid.uuid4().hex[:30], user=request.user, product=p, game_name_snapshot=game.name, product_title_snapshot=p.title, cover_url_snapshot=p.cover_url, unit_price_cents=p.price_cents, total_amount_cents=p.price_cents*quantity, quantity=quantity)
         OrderStatusHistory.objects.create(order=order, to_status=order.status, action='CREATE', actor=request.user)
         response = Response(OrderSerializer(order).data, status=201); save_idem(request.user, state, 'CREATE_ORDER', order.id, response); return response
 
@@ -106,22 +117,27 @@ def order_detail(request, pk):
 @api_view(['POST'])
 def cancel_order(request, pk):
     with transaction.atomic():
+        state, replay = get_idem(request.user, request, 'CANCEL')
+        if replay is not None: return replay
         try: order = Order.objects.select_for_update().get(pk=pk, user=request.user)
         except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
         if order.status != Order.Status.PENDING_PAYMENT: return err('当前状态不能取消', 'ORDER_STATE_CONFLICT', 409)
         old = order.status; order.status = Order.Status.CANCELLED; order.version += 1; order.save(update_fields=['status','version','updated_at'])
         OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action='CANCEL', actor=request.user)
-    return Response(OrderSerializer(order).data)
+        response = Response(OrderSerializer(order).data)
+        save_idem(request.user, state, 'CANCEL', order.id, response)
+        return response
 
 @api_view(['POST'])
 def mock_pay(request, pk):
+    if not settings.DEBUG or not settings.ALLOW_MOCK_PAYMENT: return err('模拟付款未开放', 'MOCK_DISABLED', 403)
     with transaction.atomic():
+        state, replay = get_idem(request.user, request, 'MOCK_PAY')
+        if replay is not None: return replay
         try: order = Order.objects.select_for_update().get(pk=pk, user=request.user)
         except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
-        state, replay = get_idem(request.user, request, 'MOCK_PAY')
-        if replay: return replay
         if order.status != Order.Status.PENDING_PAYMENT or order.payment_status != Order.PaymentStatus.UNPAID: return err('当前状态不能付款', 'ORDER_STATE_CONFLICT', 409)
-        key, h = state; PaymentAttempt.objects.create(order=order, idempotency_key=key, amount_cents=order.total_amount_cents, status=PaymentAttempt.Status.SUCCEEDED, completed_at=timezone.now())
+        PaymentAttempt.objects.create(order=order, idempotency_key=digest([request.user.pk,state[0]]), amount_cents=order.total_amount_cents, status=PaymentAttempt.Status.SUCCEEDED, completed_at=timezone.now())
         old = order.status; order.payment_status=Order.PaymentStatus.PAID; order.status=Order.Status.PENDING_ARRANGEMENT; order.version += 1; order.save(update_fields=['payment_status','status','version','updated_at'])
         OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action='MOCK_PAY', actor=request.user)
         response=Response(OrderSerializer(order).data); save_idem(request.user,state,'MOCK_PAY',order.id,response); return response

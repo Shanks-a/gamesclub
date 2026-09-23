@@ -1,7 +1,9 @@
-export type Game = '王者荣耀' | '和平精英' | '无畏契约' | '英雄联盟'
-export const games: Game[] = ['王者荣耀', '和平精英', '无畏契约', '英雄联盟']
-export interface Product { id: string; title: string; game: Game; price: number; original: number; art: number; tagline: string; version?: number }
-export const products: Product[] = [
+import { reactive } from 'vue'
+export type Game = string
+export const games: Game[] = reactive([] as string[])
+export interface Product { id: string; title: string; game: Game; price: number; original: number; art: number; tagline: string; version?: number; cover?:string; minQuantity?:number; maxQuantity?:number; available?:boolean }
+export const products: Product[] = reactive([] as Product[])
+export const offlineExampleProducts: Product[] = [
  { id:'duo', title:'双人默契上分', game:'王者荣耀', price:2900, original:3900, art:0, tagline:'默契配合，一起享受每一局' },
  { id:'chicken', title:'一起轻松吃鸡', game:'和平精英', price:2500, original:3500, art:1, tagline:'轻松交流，发现组队的快乐' },
  { id:'weekend', title:'周末欢乐五排', game:'王者荣耀', price:3500, original:4900, art:2, tagline:'叫上朋友，快乐开黑' },
@@ -34,7 +36,7 @@ export function changeDemoOrder(order: DemoOrder, action: 'cancel' | 'pay' | 're
  if (action === 'review' && order.tab === '评价' && !order.reviewed) return {...order, reviewed:true}
  throw new Error('当前状态不支持此操作')
 }
-export const topics = games.flatMap((game, gi) => [
+export const topics = ['王者荣耀','和平精英','无畏契约','英雄联盟'].flatMap((game, gi) => [
  { id:`${gi}-0`, game, title:'今晚排位，有人一起吗？', author:'小鹿', count:128, body:'想找几位同好一起轻松游戏，友好交流，不在意输赢。你通常几点上线？' },
  { id:`${gi}-1`, game, title:gi === 1 ? '分享你最喜欢的降落点' : '你最喜欢用哪个角色？', author:'阿澈', count:86, body:'每个人都有自己最拿手的角色，来聊聊你的选择和有趣的游戏经历吧。' },
  { id:`${gi}-2`, game, title:'分享你的新赛季上分心得', author:'橘子', count:42, body:'从团队配合到小技巧，记录自己的成长，也给其他玩家一点灵感。' },

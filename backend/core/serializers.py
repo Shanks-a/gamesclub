@@ -5,9 +5,12 @@ class GameSerializer(serializers.ModelSerializer):
 class CategorySerializer(serializers.ModelSerializer):
     class Meta: model=ProductCategory; fields=['id','game','name','description','sort_order','is_enabled','version','updated_at']
 class ProductSerializer(serializers.ModelSerializer):
+    is_available = serializers.SerializerMethodField()
+    def get_is_available(self, obj):
+        return bool(obj.is_published and obj.game.is_enabled and obj.category_id and obj.category.is_enabled and obj.category.game_id == obj.game_id)
     game = GameSerializer(read_only=True)
     category = CategorySerializer(read_only=True)
-    class Meta: model=Product; fields=['id','game','category','title','description','cover_url','price_cents','original_price_cents','min_quantity','max_quantity','is_published','version','updated_at']
+    class Meta: model=Product; fields=['id','game','category','title','description','cover_url','price_cents','original_price_cents','min_quantity','max_quantity','is_published','is_available','version','updated_at']
 class FavoriteSerializer(serializers.ModelSerializer):
     product = ProductSerializer(read_only=True)
     class Meta: model=Favorite; fields=['product','created_at']
