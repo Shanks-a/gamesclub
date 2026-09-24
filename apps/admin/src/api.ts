@@ -7,6 +7,6 @@ export async function api(path:string,method='GET',body?:unknown):Promise<any>{
  const upload=body instanceof FormData
  const response=await fetch('/api/v1/management/'+path,{method,credentials:'include',headers:{'X-CSRFToken':csrf,...(upload?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:upload?body:JSON.stringify(body)})
  const data=await response.json().catch(()=>({}))
- if(!response.ok){if(response.status===401){useSession().authenticated=false}throw new Error(response.status===409?'数据已被修改，请关闭表单并重新加载':JSON.stringify(data.error?.details||data.error?.message||data))}
+ if(!response.ok){if(response.status===401){useSession().authenticated=false}throw new Error(response.status===409&&data.error?.code==='VERSION_CONFLICT'?'数据已被修改，请刷新列表后重试':data.error?.message||JSON.stringify(data.error?.details||data))}
  return data
 }

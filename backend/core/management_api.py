@@ -4,8 +4,9 @@ import uuid
 from django.contrib.auth import authenticate, login, logout
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q, Count
+from django.db.models.deletion import ProtectedError
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.csrf import csrf_protect
@@ -100,7 +101,7 @@ def page(request, qs, serialize):
     except ValueError: raise serializers.ValidationError('分页参数必须为整数')
     return Response({'count':qs.count(),'page':number,'page_size':size,'results':[serialize(o) for o in qs[(number-1)*size:number*size]]})
 
-@endpoint(['GET','POST','PATCH'])
+@endpoint(['GET','POST','PATCH','DELETE'])
 def catalog(request, resource, pk=None):
     if resource not in REGISTRY: return Response(status=404)
     model, serializer = REGISTRY[resource]
@@ -118,17 +119,24 @@ def catalog(request, resource, pk=None):
         flag='is_published' if resource=='products' else 'is_enabled'
         if request.query_params.get('enabled') in ('true','false'): qs=qs.filter(**{flag:request.query_params['enabled']=='true'})
         return page(request,qs,lambda o:serializer(o).data)
-    if (request.method=='POST' and pk) or (request.method=='PATCH' and not pk): return Response(status=405)
-    with transaction.atomic():
-        obj=model.objects.select_for_update().filter(pk=pk).first() if pk else None
-        if pk and not obj: return Response(status=404)
-        if obj and request.data.get('version') != obj.version: return Response({'error':{'message':'数据已更新，请重新加载后编辑','code':'VERSION_CONFLICT'}},status=409)
-        before=dict(serializer(obj).data) if obj else {}
-        form=serializer(obj,data=request.data,partial=bool(obj)); form.is_valid(raise_exception=True)
-        saved=form.save(version=obj.version+1 if obj else 1)
-        result=dict(serializer(saved).data)
-        AuditLog.objects.create(actor=request.user,action='update' if obj else 'create',resource=resource,resource_id=str(saved.pk),before=before,after=result)
-        return Response(result,status=200 if obj else 201)
+    if (request.method=='POST' and pk) or (request.method in ('PATCH','DELETE') and not pk): return Response(status=405)
+    try:
+        with transaction.atomic():
+            obj=model.objects.select_for_update().filter(pk=pk).first() if pk else None
+            if pk and not obj: return Response(status=404)
+            if obj and request.data.get('version') != obj.version: return Response({'error':{'message':'数据已更新，请重新加载后操作','code':'VERSION_CONFLICT'}},status=409)
+            before=dict(serializer(obj).data) if obj else {}
+            if request.method == 'DELETE':
+                obj.delete()
+                AuditLog.objects.create(actor=request.user,action='delete',resource=resource,resource_id=str(pk),before=before,after={})
+                return Response({'id':pk,'deleted':True})
+            form=serializer(obj,data=request.data,partial=bool(obj)); form.is_valid(raise_exception=True)
+            saved=form.save(version=obj.version+1 if obj else 1)
+            result=dict(serializer(saved).data)
+            AuditLog.objects.create(actor=request.user,action='update' if obj else 'create',resource=resource,resource_id=str(saved.pk),before=before,after=result)
+            return Response(result,status=200 if obj else 201)
+    except (ProtectedError, IntegrityError):
+        return Response({'error':{'message':'该记录已有业务关联，不能直接删除；请先移除首页配置等引用，或将记录停用／下架','code':'DELETE_CONFLICT'}},status=409)
 
 @endpoint(['GET'])
 def overview(request):

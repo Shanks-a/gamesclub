@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
-from .models import GamePartition, ProductCategory, Product, UserProfile, AccessToken, AuditLog, Order, PaymentAttempt
+from .models import GamePartition, ProductCategory, Product, UserProfile, AccessToken, AuditLog, Order, PaymentAttempt, HomeEntry
 
 @override_settings(DEBUG=True, ALLOW_DEV_LOGIN=True, ALLOW_MOCK_PAYMENT=True)
 class ManagementTests(TestCase):
@@ -42,6 +42,31 @@ class ManagementTests(TestCase):
         other=GamePartition.objects.create(name='另一个游戏')
         response=self.web.patch(f'/api/v1/management/products/{self.product.id}/',{'game':other.id,'version':1},format='json')
         self.assertEqual(response.status_code,400)
+
+    def test_catalog_delete_protects_references_and_audits_success(self):
+        product_url=f'/api/v1/management/products/{self.product.pk}/'
+        self.assertEqual(self.web.delete(product_url,{'version':1},format='json').status_code,403)
+        self.authenticate_web()
+        home=HomeEntry.objects.create(kind='special',title='精选',product=self.product)
+        home_url=f'/api/v1/management/home/{home.pk}/'
+        self.assertEqual(self.web.delete(product_url,{'version':1},format='json').status_code,409)
+        self.assertTrue(Product.objects.filter(pk=self.product.pk).exists())
+        self.assertEqual(AuditLog.objects.count(),0)
+        self.assertEqual(self.web.delete(home_url,{'version':0},format='json').status_code,409)
+        self.assertEqual(self.web.delete(home_url,{'version':1},format='json').status_code,200)
+        self.assertFalse(HomeEntry.objects.filter(pk=home.pk).exists())
+        self.assertEqual(self.web.delete(product_url,{'version':1},format='json').status_code,200)
+        self.assertFalse(Product.objects.filter(pk=self.product.pk).exists())
+        self.assertEqual(list(AuditLog.objects.values_list('action','resource')), [('delete','home'),('delete','products')])
+
+    def test_ordered_product_cannot_be_deleted(self):
+        self.authenticate_web()
+        order=self.create_order(self.api_for(self.user))
+        self.assertEqual(order.status_code,201,order.data)
+        result=self.web.delete(f'/api/v1/management/products/{self.product.pk}/',{'version':1},format='json')
+        self.assertEqual(result.status_code,409,result.data)
+        self.assertTrue(Order.objects.filter(pk=order.data['id']).exists())
+        self.assertEqual(self.web.delete(f'/api/v1/management/orders/{order.data["id"]}/',{'version':1},format='json').status_code,405)
 
     def api_for(self,user):
         raw,_=AccessToken.issue(user); client=APIClient(); client.credentials(HTTP_AUTHORIZATION='Bearer '+raw);return client
