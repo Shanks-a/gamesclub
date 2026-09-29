@@ -9,7 +9,7 @@
 - 小程序类型检查、3项测试、微信/H5构建和管理Web类型检查/构建已通过。真实浏览器完整验收、微信真机、后台并发编辑/上下架竞争、备份恢复仍未完成。
 - 数据检查快照：4游戏、12类型、5商品、0首页配置、0订单；新库管理员和首页配置需要设置。本地 `.env`、数据库、媒体、依赖与产物不得提交。
 - **2026-09-29 验收更新**：8 项手动双端验收清单已全部执行通过（API 23/23 断言 + 管理端/H5 浏览器 UI 截图）；过程中发现并修复 H5 端 API 基地址缺陷。数据快照现为 7游戏、16类型、7商品、6首页配置、1订单。详见 [notices/E2E验收报告.md](./notices/E2E验收报告.md)。
-- **2026-09-29 P3 真实微信登录**：后端新增 `WechatIdentity` 模型（迁移 0006，`(appid,openid)` 唯一）、`core/wechat.py` code2session 封装、`POST /api/v1/auth/wechat-login/` 端点；小程序登录页改造（微信端 `uni.login` 取 code 调 wechat-login，H5 保留 dev-login）。AppSecret 仅存 `backend/.env`（已 gitignore），不下发前端、不落日志、openid 不落账号名。后端全量 21 项测试通过，type-check/build 通过，假 code 冒烟返回安全文案 40029。**真实联调待微信开发者工具填 AppID 后手动执行**，见 [notices/P3-微信登录实施与验收.md](./notices/P3-微信登录实施与验收.md)。
+- **2026-09-29 P3 真实微信登录**：后端新增 `WechatIdentity` 模型（迁移 0006，`(appid,openid)` 唯一）、`core/wechat.py` code2session 封装、`POST /api/v1/auth/wechat-login/` 端点；小程序登录页改造（微信端 `uni.login` 取 code 调 wechat-login，H5 保留 dev-login）。AppSecret 仅存 `backend/.env`（已 gitignore），不下发前端、不落日志、openid 不落账号名。后端全量 21 项测试通过，type-check/build 通过，假 code 冒烟返回安全文案 40029。**真实联调已通过**：微信开发者工具点「微信登录」后，后端真实换取 openid 建号（`user_id=4`），身份/账号/Token 各 1 条，重登不重复建号。详见 [notices/P3-微信登录验收报告.md](./notices/P3-微信登录验收报告.md)。遗留：昵称/头像仍为默认「微信玩家」（code2session 已不下发，需 `wx.getUserProfile` 主动授权，属后续项）；生产域名白名单待上线配置。
 - 完成度与操作步骤以 [第三阶段完成度与联调手册.md](./第三阶段完成度与联调手册.md) 为准；历史基线保留供追溯。
 - `notices/` 用于保存问题原因、处理过程、验证证据和预防事项，不作为新的产品需求来源。
 
