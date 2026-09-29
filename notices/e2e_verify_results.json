@@ -1,0 +1,117 @@
+[
+  {
+    "name": "管理端登录",
+    "ok": true,
+    "detail": "username=accept-admin"
+  },
+  {
+    "name": "项1 新建游戏",
+    "ok": 7,
+    "detail": "game_id=7 version=1"
+  },
+  {
+    "name": "项1 新建类型",
+    "ok": 16,
+    "detail": "cat_id=16"
+  },
+  {
+    "name": "项1 新建商品(发布)",
+    "ok": 7,
+    "detail": "prod_id=7 version=1"
+  },
+  {
+    "name": "项1 小程序商品目录可见",
+    "ok": true,
+    "detail": "命中商品数=1"
+  },
+  {
+    "name": "项2 配置特价",
+    "ok": true,
+    "detail": "home_id=5"
+  },
+  {
+    "name": "项2 配置人气",
+    "ok": true,
+    "detail": "home_id=6"
+  },
+  {
+    "name": "项2 小程序首页显示配置商品",
+    "ok": true,
+    "detail": "kinds=['banner', 'popular', 'special']"
+  },
+  {
+    "name": "项2 无虚构销量",
+    "ok": true,
+    "detail": "检查 product_detail.sales 未出现非零虚构值"
+  },
+  {
+    "name": "项3 创建订单(数量2)",
+    "ok": 1,
+    "detail": "order_no=GC9971e23744df49acad180574383c40 total=5800"
+  },
+  {
+    "name": "项3 Web 改价",
+    "ok": true,
+    "detail": "新价=3000 version=2"
+  },
+  {
+    "name": "项3 旧订单保留原快照金额",
+    "ok": true,
+    "detail": "快照价=2900 现价=3000"
+  },
+  {
+    "name": "项4 首次模拟付款",
+    "ok": true,
+    "detail": "status=PENDING_ARRANGEMENT pay=PAID"
+  },
+  {
+    "name": "项4 同键重复付款幂等",
+    "ok": true,
+    "detail": "返回 status=200（回放首次结果）"
+  },
+  {
+    "name": "项4 不同键二次付款被拒",
+    "ok": true,
+    "detail": "status=409"
+  },
+  {
+    "name": "项4 Web订单出现PAID+状态历史",
+    "ok": true,
+    "detail": "history数=2 付款事件=1"
+  },
+  {
+    "name": "项5 收藏成功且列表含该商品",
+    "ok": true,
+    "detail": "收藏数=1"
+  },
+  {
+    "name": "项5 退出后旧令牌返回401",
+    "ok": true,
+    "detail": "status=401"
+  },
+  {
+    "name": "项5 重登录后服务端收藏仍存在",
+    "ok": true,
+    "detail": "收藏数=1"
+  },
+  {
+    "name": "项6 旧版本保存返回409",
+    "ok": true,
+    "detail": "status=409 code=VERSION_CONFLICT"
+  },
+  {
+    "name": "项8 下架商品",
+    "ok": true,
+    "detail": "is_published=False"
+  },
+  {
+    "name": "项8 下架后不能创建新订单",
+    "ok": true,
+    "detail": "status=409 code=PRODUCT_UNAVAILABLE"
+  },
+  {
+    "name": "项8 历史订单仍可查",
+    "ok": true,
+    "detail": "order_no=GC9971e23744df49acad180574383c40"
+  }
+]

@@ -13,6 +13,17 @@ class UserProfile(models.Model):
         verbose_name = '用户资料'
         verbose_name_plural = '用户资料'
 
+class WechatIdentity(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='wechat_identities')
+    appid = models.CharField('小程序 AppID', max_length=64)
+    openid = models.CharField('微信 openid', max_length=64)
+    unionid = models.CharField('微信 unionid', max_length=64, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['appid','openid'], name='uniq_appid_openid')]
+        verbose_name = '微信身份'
+        verbose_name_plural = '微信身份'
+
 class AccessToken(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='access_tokens')
     token_hash = models.CharField(max_length=64, unique=True)

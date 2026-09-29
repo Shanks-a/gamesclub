@@ -8,6 +8,8 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'dev-only-change-me')
 DEBUG = os.getenv('DJANGO_DEBUG', '1') == '1'
 ALLOW_DEV_LOGIN = os.getenv('ALLOW_DEV_LOGIN', '0') == '1'
 ALLOW_MOCK_PAYMENT = os.getenv('ALLOW_MOCK_PAYMENT', '0') == '1'
+WECHAT_APPID = os.getenv('WECHAT_APPID', '')
+WECHAT_APPSECRET = os.getenv('WECHAT_APPSECRET', '')
 ALLOWED_HOSTS = [h for h in os.getenv('DJANGO_ALLOWED_HOSTS', '127.0.0.1,localhost').split(',') if h]
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()

@@ -7,8 +7,9 @@ from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from .models import AccessToken, GamePartition, Product, ProductCategory, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile
+from .models import AccessToken, GamePartition, Product, ProductCategory, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile, WechatIdentity
 from .serializers import GameSerializer, CategorySerializer, ProductSerializer, FavoriteSerializer, OrderSerializer, ProductWriteSerializer
+from .wechat import code2session, WechatLoginError
 
 def err(message, code, http=400):
     return Response({'error': {'code': code, 'message': message}}, status=http)
@@ -35,6 +36,32 @@ def dev_login(request):
     User = get_user_model(); user, _ = User.objects.get_or_create(username='dev-player'); UserProfile.objects.get_or_create(user=user)
     raw, _ = AccessToken.issue(user)
     return Response({'access_token': raw, 'user': {'id':user.id, 'nickname':user.profile.nickname, 'avatar_url':user.profile.avatar_url}})
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def wechat_login(request):
+    code = request.data.get('code') if isinstance(request.data, dict) else None
+    if not code or not isinstance(code, str) or len(code) > 256:
+        return err('缺少登录凭证 code', 'WECHAT_CODE_REQUIRED', 400)
+    try:
+        sess = code2session(code)
+    except WechatLoginError as e:
+        return err(e.message, 'WECHAT_LOGIN_FAILED', 400)
+    openid = sess['openid']; appid = settings.WECHAT_APPID
+    User = get_user_model()
+    with transaction.atomic():
+        identity = WechatIdentity.objects.filter(appid=appid, openid=openid).select_related('user').first()
+        if identity:
+            user = identity.user
+        else:
+            # 首次登录创建账号。用户名用 openid 哈希，避免暴露原始 openid。
+            username = 'wx_' + hashlib.sha256(openid.encode()).hexdigest()[:20]
+            user = User.objects.create_user(username=username)
+            UserProfile.objects.create(user=user, nickname='微信玩家')
+            WechatIdentity.objects.create(user=user, appid=appid, openid=openid, unionid=sess.get('unionid', ''))
+        raw, _ = AccessToken.issue(user)
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        return Response({'access_token': raw, 'user': {'id': user.id, 'nickname': profile.nickname, 'avatar_url': profile.avatar_url}})
 
 @api_view(['GET'])
 def me(request):
