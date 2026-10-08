@@ -10,7 +10,8 @@
   {"path":"pages/orders/index","style":{"navigationBarTitleText":"我的订单"}},
   {"path":"pages/services/index","style":{"navigationBarTitleText":"服务中心"}},
   {"path":"pages/login/index","style":{"navigationBarTitleText":"登录"}},
-  {"path":"pages/detail/index","style":{"navigationBarTitleText":"详情"}}
+  {"path":"pages/detail/index","style":{"navigationBarTitleText":"详情"}},
+  {"path":"pages/partner/index","style":{"navigationBarTitleText":"陪玩工作台"}}
  ],
  "globalStyle":{"navigationStyle":"custom","backgroundColor":"#F6F5F2","navigationBarTextStyle":"black","navigationBarBackgroundColor":"#F6F5F2"},
  "tabBar":{"color":"#747486","selectedColor":"#8875AA","backgroundColor":"#EFEDF3","borderStyle":"white","list":[

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import GamePartition, Product, ProductCategory, Favorite, Order
+from .models import GamePartition, Product, ProductCategory, Favorite, Order, Partner, PartnerApplication
 class GameSerializer(serializers.ModelSerializer):
     class Meta: model=GamePartition; fields=['id','name','icon','sort_order','version']
 class CategorySerializer(serializers.ModelSerializer):
@@ -15,7 +15,17 @@ class FavoriteSerializer(serializers.ModelSerializer):
     product = ProductSerializer(read_only=True)
     class Meta: model=Favorite; fields=['product','created_at']
 class OrderSerializer(serializers.ModelSerializer):
-    class Meta: model=Order; fields=['id','order_no','product','game_name_snapshot','product_title_snapshot','cover_url_snapshot','unit_price_cents','total_amount_cents','quantity','status','payment_status','version','created_at','updated_at']
+    class Meta: model=Order; fields=['id','order_no','product','game_name_snapshot','product_title_snapshot','cover_url_snapshot','unit_price_cents','total_amount_cents','quantity','appointment_date','appointment_slot','partner','status','payment_status','version','created_at','updated_at']
+class PartnerSerializer(serializers.ModelSerializer):
+    game = GameSerializer(read_only=True)
+    nickname = serializers.CharField(source='user.profile.nickname', read_only=True)
+    username = serializers.CharField(source='user.username', read_only=True)
+    class Meta: model=Partner; fields=['id','user','username','nickname','game','is_active','intro','version','created_at']
+class PartnerApplicationSerializer(serializers.ModelSerializer):
+    game = GameSerializer(read_only=True)
+    nickname = serializers.CharField(source='user.profile.nickname', read_only=True)
+    username = serializers.CharField(source='user.username', read_only=True)
+    class Meta: model=PartnerApplication; fields=['id','user','username','nickname','game','reason','status','reviewed_by','reviewed_at','created_at']
 class ProductWriteSerializer(serializers.ModelSerializer):
     game_id = serializers.PrimaryKeyRelatedField(source='game', queryset=GamePartition.objects.all())
     category_id = serializers.PrimaryKeyRelatedField(source='category', queryset=ProductCategory.objects.all())

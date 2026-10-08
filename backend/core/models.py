@@ -100,11 +100,39 @@ class Favorite(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     class Meta: constraints = [models.UniqueConstraint(fields=['user','product'], name='uniq_user_product_favorite')]
 
+class Partner(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='partner', verbose_name='陪玩账号')
+    game = models.ForeignKey(GamePartition, on_delete=models.PROTECT, related_name='partners', verbose_name='绑定游戏分区')
+    is_active = models.BooleanField('接单开关', default=True)
+    intro = models.CharField('陪玩简介', max_length=255, blank=True)
+    version = models.PositiveIntegerField('版本', default=1)
+    created_at = models.DateTimeField(auto_now_add=True); updated_at = models.DateTimeField(auto_now=True)
+    class Meta:
+        verbose_name = '陪玩档案'
+        verbose_name_plural = '陪玩档案'
+
+class PartnerApplication(models.Model):
+    class Status(models.TextChoices):
+        PENDING='PENDING'; APPROVED='APPROVED'; REJECTED='REJECTED'
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='partner_applications', verbose_name='申请人')
+    game = models.ForeignKey(GamePartition, on_delete=models.PROTECT, related_name='partner_applications', verbose_name='意向游戏分区')
+    reason = models.TextField('申请说明', blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='reviewed_applications', verbose_name='审核人')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user','game'], name='uniq_user_game_application')]
+        verbose_name = '陪玩入驻申请'
+        verbose_name_plural = '陪玩入驻申请'
+
 class Order(models.Model):
     class Status(models.TextChoices):
-        PENDING_PAYMENT='PENDING_PAYMENT'; PENDING_ARRANGEMENT='PENDING_ARRANGEMENT'; CANCELLED='CANCELLED'
+        PENDING_PAYMENT='PENDING_PAYMENT'; PENDING_ARRANGEMENT='PENDING_ARRANGEMENT'; PENDING_ACCEPTANCE='PENDING_ACCEPTANCE'; ACCEPTED='ACCEPTED'; IN_SERVICE='IN_SERVICE'; PENDING_CONFIRMATION='PENDING_CONFIRMATION'; COMPLETED='COMPLETED'; CANCELLED='CANCELLED'
     class PaymentStatus(models.TextChoices):
         UNPAID='UNPAID'; PAID='PAID'
+    class Slot(models.TextChoices):
+        MORNING='morning'; AFTERNOON='afternoon'; EVENING='evening'
     order_no = models.CharField('订单号', max_length=32, unique=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='orders', verbose_name='用户')
     product = models.ForeignKey(Product, on_delete=models.PROTECT, verbose_name='商品')
@@ -114,6 +142,9 @@ class Order(models.Model):
     unit_price_cents = models.PositiveIntegerField()
     total_amount_cents = models.PositiveIntegerField()
     quantity = models.PositiveIntegerField()
+    appointment_date = models.DateField('预约日期', null=True, blank=True)
+    appointment_slot = models.CharField('预约时段', max_length=16, choices=Slot.choices, null=True, blank=True)
+    partner = models.ForeignKey(Partner, on_delete=models.PROTECT, null=True, blank=True, related_name='orders', verbose_name='陪玩')
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING_PAYMENT)
     payment_status = models.CharField(max_length=16, choices=PaymentStatus.choices, default=PaymentStatus.UNPAID)
     version = models.PositiveIntegerField(default=1)

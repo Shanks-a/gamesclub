@@ -16,24 +16,22 @@ export function filterProducts(game: string, query = '', ascending?: boolean) {
  const result = products.filter(p => (!game || game === '全部' || game === '推荐' || p.game === game) && `${p.title}${p.game}`.toLowerCase().includes(q))
  return ascending === undefined ? result : result.sort((a,b) => ascending ? a.price-b.price : b.price-a.price)
 }
-export const orderTabs = ['待付款','待发货','待收货','评价','退款/售后'] as const
+export const orderTabs = ['待付款','待派单','已接单','服务中','待验收'] as const
 export type OrderTab = typeof orderTabs[number]
 // UI-only demonstration categories; not the backend order-state contract.
 export interface DemoOrder { id: string; productId: string; quantity: number; tab: OrderTab; cancelled?: boolean; reviewed?: boolean }
 export const seedOrders: DemoOrder[] = [
  { id:'DEMO-1001', productId:'duo', quantity:1, tab:'待付款' },
  { id:'DEMO-1002', productId:'chicken', quantity:1, tab:'待付款' },
- { id:'DEMO-1003', productId:'tactics', quantity:1, tab:'待发货' },
- { id:'DEMO-1004', productId:'weekend', quantity:1, tab:'待收货' },
- { id:'DEMO-1005', productId:'valley', quantity:1, tab:'评价' },
- { id:'DEMO-1006', productId:'duo', quantity:1, tab:'退款/售后' },
+ { id:'DEMO-1003', productId:'tactics', quantity:1, tab:'待派单' },
+ { id:'DEMO-1004', productId:'weekend', quantity:1, tab:'已接单' },
+ { id:'DEMO-1005', productId:'valley', quantity:1, tab:'服务中' },
+ { id:'DEMO-1006', productId:'duo', quantity:1, tab:'待验收' },
 ]
-export function changeDemoOrder(order: DemoOrder, action: 'cancel' | 'pay' | 'receive' | 'review'): DemoOrder {
+export function changeDemoOrder(order: DemoOrder, action: 'cancel' | 'pay'): DemoOrder {
  if (order.cancelled) throw new Error('该演示订单已取消')
  if (action === 'cancel' && order.tab === '待付款') return {...order, cancelled:true}
- if (action === 'pay' && order.tab === '待付款') return {...order, tab:'待发货'}
- if (action === 'receive' && order.tab === '待收货') return {...order, tab:'评价'}
- if (action === 'review' && order.tab === '评价' && !order.reviewed) return {...order, reviewed:true}
+ if (action === 'pay' && order.tab === '待付款') return {...order, tab:'待派单'}
  throw new Error('当前状态不支持此操作')
 }
 export const topics = ['王者荣耀','和平精英','无畏契约','英雄联盟'].flatMap((game, gi) => [
