@@ -3,7 +3,8 @@ import { clearAccessToken, request } from './api/client'
 import { seedOrders, changeDemoOrder, products, conversations, type DemoOrder, type ChatMessage } from './domain'
 const KEY = 'gamesclub-local-data-v2'
 const defaultMessages:Record<string,ChatMessage[]> = Object.fromEntries(conversations.filter(c=>c.id!=='notice').map(c=>[c.id,[{id:`${c.id}-0`,mine:false,text:c.text,time:c.time}]]))
-export const demo = reactive({ loggedIn:false, favorites:[] as string[], orders:[] as DemoOrder[], read:[] as string[], drafts:{} as Record<string,string>, messages:defaultMessages })
+export interface MeInfo { id:number; nickname:string; avatar_url:string; is_partner:boolean; partner_active:boolean }
+export const demo = reactive({ loggedIn:false, favorites:[] as string[], orders:[] as DemoOrder[], read:[] as string[], drafts:{} as Record<string,string>, messages:defaultMessages, me:null as MeInfo|null })
 export function restore() {
  try {
   const saved = uni.getStorageSync(KEY)
@@ -17,8 +18,9 @@ export function persist() {
  catch { uni.showToast({ title:'设备存储不可用，本次操作仅在当前会话有效', icon:'none' }) }
 }
 export function loginDemo() { demo.loggedIn=true; persist() }
-export function logoutDemo() { clearAccessToken(); demo.loggedIn=false; demo.favorites=[]; demo.orders=[]; demo.messages={}; demo.drafts={}; demo.read=[]; persist() }
-export async function validateSession(){try{await request('/me/');demo.loggedIn=true}catch(e){logoutDemo();throw e}}
+export function logoutDemo() { clearAccessToken(); demo.loggedIn=false; demo.me=null; demo.favorites=[]; demo.orders=[]; demo.messages={}; demo.drafts={}; demo.read=[]; persist() }
+export async function validateSession(){try{demo.me=await request<MeInfo>('/me/');demo.loggedIn=true}catch(e){logoutDemo();throw e}}
+export async function updateProfile(patch: {nickname?:string; avatar_url?:string}) { demo.me=await request<MeInfo>('/me/',{method:'PATCH',data:patch}); return demo.me }
 export function toggleFavorite(id: string) { if (!products.some(p=>p.id===id)) return; demo.favorites=demo.favorites.includes(id)?demo.favorites.filter(v=>v!==id):[...demo.favorites,id]; persist() }
 export function actOrder(id: string, action: Parameters<typeof changeDemoOrder>[1]) {
  if (!demo.loggedIn) throw new Error('请先进入演示登录')

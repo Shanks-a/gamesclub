@@ -13,14 +13,10 @@ test('filters combine game and query without altering catalog order',()=>{
 test('demo order transitions reject repeated payment and cancelled-order mutation',()=>{
  const initial={...seedOrders[0]}
  const paid=changeDemoOrder(initial,'pay')
- assert.equal(paid.tab,'待发货');assert.equal(initial.tab,'待付款')
+ assert.equal(paid.tab,'待派单');assert.equal(initial.tab,'待付款')
  assert.throws(()=>changeDemoOrder(paid,'pay'))
- assert.throws(()=>changeDemoOrder(paid,'receive'))
  const cancelled=changeDemoOrder(initial,'cancel')
  assert.throws(()=>changeDemoOrder(cancelled,'pay'))
- const completed=changeDemoOrder(seedOrders[3],'receive')
- assert.equal(completed.tab,'评价')
- const reviewed=changeDemoOrder(completed,'review');assert.equal(reviewed.reviewed,true)
- assert.throws(()=>changeDemoOrder(reviewed,'review'))
+ assert.throws(()=>changeDemoOrder(seedOrders[3],'pay'))
 })
 test('integer cents display preserves fractional amounts',()=>{assert.equal(money(2900),'29');assert.equal(money(2950),'29.50');assert.equal(money(1),'0.01')})

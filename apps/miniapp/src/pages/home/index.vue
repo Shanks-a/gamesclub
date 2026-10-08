@@ -16,7 +16,7 @@ const list=computed(()=>filterProducts(selected.value,query.value))
 const gameCategories=ref<ApiCategory[]>([]), gameProducts=ref<Product[]>([]), gameLoading=ref(false), gameError=ref('')
 const gameList=computed(()=>gameProducts.value.filter(p=>!query.value.trim()||`${p.title}${p.tagline}`.toLowerCase().includes(query.value.trim().toLowerCase())))
 const selectedCategory=ref(0)
-const shortcuts=[{title:'活动抽奖',icon:'gift',id:'lottery'},{title:'下单流程',icon:'order',id:'process'},{title:'客服中心',icon:'headset',id:'support'},{title:'考核中心',icon:'assessment',id:'assessment'}]
+const shortcuts=[{title:'活动抽奖',icon:'gift',id:'lottery'},{title:'下单流程',icon:'order',id:'process'},{title:'客服中心',icon:'headset',id:'support'},{title:'我要加入',icon:'assessment',id:'join'}]
 const banners=[{eyebrow:'WEEKEND TOGETHER',title:'开黑，更有默契',sub:'发现你的下一位游戏搭子',cta:'探索好搭子',art:3},{eyebrow:'PLAY WITH FRIENDS',title:'找到你的同频玩家',sub:'聊聊热爱，一起快乐开局',cta:'进入频道',art:1},{eyebrow:'SPECIAL FOR YOU',title:'好价开局，快乐加倍',sub:'看看今天的精选特价服务',cta:'发现好价',art:2}]
 function bannerClick(i:number){if(i===1)go('channel');else go('specials')}
 let sequence=0

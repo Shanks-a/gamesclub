@@ -1,4 +1,6 @@
 export interface ApiGame {id:number;name:string;icon:string;sort_order:number;version:number}
 export interface ApiCategory {id:number;game:number;name:string;description:string;sort_order:number;is_enabled:boolean;version:number;updated_at:string}
 export interface ApiProduct {id:number;game:ApiGame;category?:ApiCategory;title:string;description:string;cover_url:string;price_cents:number;original_price_cents:number;min_quantity:number;max_quantity:number;is_published:boolean;is_available:boolean;version:number;updated_at:string}
-export interface ApiOrder {id:number;order_no:string;product:number;game_name_snapshot:string;product_title_snapshot:string;cover_url_snapshot:string;unit_price_cents:number;total_amount_cents:number;quantity:number;status:string;payment_status:string;version:number;created_at:string;updated_at:string}
+export interface ApiOrder {id:number;order_no:string;product:number;game_name_snapshot:string;product_title_snapshot:string;cover_url_snapshot:string;unit_price_cents:number;total_amount_cents:number;quantity:number;appointment_date?:string|null;appointment_slot?:string|null;partner?:number|null;status:string;payment_status:string;version:number;created_at:string;updated_at:string}
+export interface ApiGameSimple {id:number;name:string;icon:string;sort_order:number;version:number}
+export interface ApiPartnerApplication {id:number;user:number;username:string;nickname:string;game:ApiGameSimple;reason:string;status:string;reviewed_by:number|null;reviewed_at:string|null;created_at:string}
