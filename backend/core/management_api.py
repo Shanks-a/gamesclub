@@ -243,25 +243,45 @@ def partners(request, pk=None):
 
 @endpoint(['PATCH'])
 def partner_detail(request, pk):
-    try: partner = Partner.objects.select_for_update().get(pk=pk)
-    except Partner.DoesNotExist: return Response(status=404)
-    if request.data.get('version') != partner.version:
-        return Response({'error':{'message':'数据已更新，请重新加载后操作','code':'VERSION_CONFLICT'}},status=409)
-    allowed = {'is_active','intro','game'}
-    unknown = set(request.data) - allowed - {'version'}
-    if unknown: return Response({'error':{'message':'不接受字段：'+','.join(sorted(unknown)),'code':'INVALID_FIELDS'}},status=400)
-    if 'game' in request.data and request.data['game'] is not None and type(request.data['game']) is not int:
-        return Response({'error':{'message':'游戏分区编号必须为整数','code':'INVALID_GAME'}},status=400)
-    if 'is_active' in request.data and type(request.data['is_active']) is not bool:
-        return Response({'error':{'message':'接单开关必须为布尔值','code':'INVALID_ACTIVE'}},status=400)
-    before = dict(PartnerSerializer(partner).data)
-    if 'game' in request.data and request.data['game'] is not None: partner.game_id = request.data['game']
-    if 'intro' in request.data: partner.intro = request.data['intro']
-    if 'is_active' in request.data: partner.is_active = request.data['is_active']
-    partner.version += 1; partner.save()
-    result = dict(PartnerSerializer(partner).data)
-    AuditLog.objects.create(actor=request.user, action='update', resource='partner', resource_id=str(pk), before=before, after=result)
+    with transaction.atomic():
+        try: partner = Partner.objects.select_for_update().get(pk=pk)
+        except Partner.DoesNotExist: return Response(status=404)
+        if request.data.get('version') != partner.version:
+            return Response({'error':{'message':'数据已更新，请重新加载后操作','code':'VERSION_CONFLICT'}},status=409)
+        allowed = {'is_active','intro','game'}
+        unknown = set(request.data) - allowed - {'version'}
+        if unknown: return Response({'error':{'message':'不接受字段：'+','.join(sorted(unknown)),'code':'INVALID_FIELDS'}},status=400)
+        if 'game' in request.data and request.data['game'] is not None and type(request.data['game']) is not int:
+            return Response({'error':{'message':'游戏分区编号必须为整数','code':'INVALID_GAME'}},status=400)
+        if 'is_active' in request.data and type(request.data['is_active']) is not bool:
+            return Response({'error':{'message':'接单开关必须为布尔值','code':'INVALID_ACTIVE'}},status=400)
+        before = dict(PartnerSerializer(partner).data)
+        if 'game' in request.data and request.data['game'] is not None: partner.game_id = request.data['game']
+        if 'intro' in request.data: partner.intro = request.data['intro']
+        if 'is_active' in request.data: partner.is_active = request.data['is_active']
+        partner.version += 1; partner.save()
+        result = dict(PartnerSerializer(partner).data)
+        AuditLog.objects.create(actor=request.user, action='update', resource='partner', resource_id=str(pk), before=before, after=result)
     return Response(result)
+
+@endpoint(['DELETE'])
+def partner_delete(request, pk):
+    """删除陪玩档案。有未完成派单（非取消/完成）时拒绝，保护业务一致性。"""
+    with transaction.atomic():
+        try: partner = Partner.objects.select_for_update().get(pk=pk)
+        except Partner.DoesNotExist: return Response(status=404)
+        if request.data.get('version') != partner.version:
+            return Response({'error':{'message':'数据已更新，请重新加载后操作','code':'VERSION_CONFLICT'}},status=409)
+        # 存在未完成的派单则拒绝删除
+        active = Order.objects.filter(partner=partner).exclude(status__in=[Order.Status.CANCELLED, Order.Status.COMPLETED]).exists()
+        if active:
+            return Response({'error':{'message':'该陪玩存在未完成订单，无法删除','code':'PARTNER_HAS_ACTIVE_ORDERS'}},status=409)
+        # 驳回相关待审核申请，避免出现悬挂档案引用
+        PartnerApplication.objects.filter(user=partner.user, status=PartnerApplication.Status.PENDING).update(status=PartnerApplication.Status.REJECTED)
+        before = dict(PartnerSerializer(partner).data)
+        partner.delete()
+        AuditLog.objects.create(actor=request.user, action='delete', resource='partner', resource_id=str(pk), before=before)
+    return Response({'ok':True})
 
 @endpoint(['POST'])
 def order_assign(request, pk):
