@@ -66,10 +66,13 @@ def wechat_login(request):
 @api_view(['GET','PATCH'])
 def me(request):
     profile, _ = UserProfile.objects.get_or_create(user=request.user)
-    if request.method == 'GET':
+    def full():
+        # GET 与 PATCH 统一返回完整结构，避免前端用 PATCH 响应覆盖 me 后丢失陪玩字段。
         partner = Partner.objects.filter(user=request.user).first()
-        return Response({'id':request.user.id, 'nickname':profile.nickname, 'avatar_url':profile.avatar_url,
-                         'is_partner': partner is not None, 'partner_active': partner.is_active if partner else False})
+        return {'id':request.user.id, 'nickname':profile.nickname, 'avatar_url':profile.avatar_url,
+                'is_partner': partner is not None, 'partner_active': partner.is_active if partner else False}
+    if request.method == 'GET':
+        return Response(full())
     # PATCH 更新昵称/头像。只接受白名单字段，昵称做基本长度与去空校验。
     data = request.data if isinstance(request.data, dict) else {}
     allowed = {'nickname', 'avatar_url'}
@@ -86,7 +89,7 @@ def me(request):
         if avatar is not None and (not isinstance(avatar, str) or not avatar.startswith(('/media/', 'http://', 'https://'))): return err('头像地址无效', 'INVALID_AVATAR')
         profile.avatar_url = avatar or ''
     profile.save(update_fields=[f for f in ('nickname','avatar_url') if f in data])
-    return Response({'id':request.user.id, 'nickname':profile.nickname, 'avatar_url':profile.avatar_url})
+    return Response(full())
 
 @api_view(['POST'])
 def upload_avatar(request):
