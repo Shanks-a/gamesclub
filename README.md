@@ -26,6 +26,10 @@
 
 ![首页设计](design/preview.png)
 
+实际运行效果（H5 端，全幅插画 banner 轮播）：
+
+![小程序首页实机效果](notices/e2e-screenshots/06-h5-home.png)
+
 ### 2. 管理后台 Web（Vue 3 + Element Plus）
 
 独立管理端，覆盖运营日常操作，全程带审计与版本冲突保护：
