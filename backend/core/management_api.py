@@ -66,8 +66,12 @@ class CategoryWrite(serializers.ModelSerializer):
             raise serializers.ValidationError('已有商品的类型不能更换游戏')
         return attrs
 
+HOME_KINDS = ('banner', 'special', 'popular')
+
 class ProductWrite(serializers.ModelSerializer):
     category = serializers.PrimaryKeyRelatedField(queryset=ProductCategory.objects.all(), required=True, allow_null=False)
+    # 可选：商品要投放的首页位置（banner/special/popular）。传入则按给定集合同步首页配置；不传则不动首页。
+    homeplacements = serializers.ListField(child=serializers.ChoiceField(choices=HOME_KINDS), required=False, write_only=True)
     class Meta:
         model = Product
         fields = '__all__'
@@ -96,6 +100,29 @@ class HomeWrite(serializers.ModelSerializer):
 
 REGISTRY = {'games':(GamePartition,GameWrite), 'categories':(ProductCategory,CategoryWrite), 'products':(Product,ProductWrite), 'home':(HomeEntry,HomeWrite)}
 
+def sync_product_home(product, placements):
+    """按给定位置集合同步商品的首页投放。
+
+    placements: HOME_KINDS 的子集。会：
+    - 移除该商品现有、但不在 placements 中的 HomeEntry（仅 product 关联的）；
+    - 为 placements 中缺失的位置创建 HomeEntry（target='product'，标题/封面复用商品）。
+    """
+    wanted = set(placements or [])
+    existing = HomeEntry.objects.filter(product=product)
+    existing_kinds = {e.kind for e in existing}
+    # 移除不再投放的位置
+    for e in existing:
+        if e.kind not in wanted:
+            e.delete()
+    # 新增缺失的位置
+    for kind in wanted:
+        if kind in existing_kinds:
+            continue
+        HomeEntry.objects.create(
+            kind=kind, title=product.title, image_url=product.cover_url or '',
+            product=product, target='product', sort_order=0, is_enabled=True,
+        )
+
 def page(request, qs, serialize):
     try: number=max(1,int(request.query_params.get('page',1))); size=min(100,max(1,int(request.query_params.get('page_size',20))))
     except ValueError: raise serializers.ValidationError('分页参数必须为整数')
@@ -107,9 +134,19 @@ def catalog(request, resource, pk=None):
     model, serializer = REGISTRY[resource]
     if request.method == 'GET':
         qs=model.objects.all().order_by('id')
+        # 商品额外附带首页投放位置，供前端编辑回显
+        placements_map = {}
+        if resource == 'products':
+            placements_map = {}
+            for product_id, kind in HomeEntry.objects.filter(product__isnull=False).values_list('product_id', 'kind'):
+                placements_map.setdefault(product_id, []).append(kind)
         if pk:
             obj=qs.filter(pk=pk).first()
-            return Response(serializer(obj).data) if obj else Response(status=404)
+            if not obj: return Response(status=404)
+            data = dict(serializer(obj).data)
+            if resource == 'products':
+                data['homeplacements'] = placements_map.get(obj.pk, [])
+            return Response(data)
         q=request.query_params.get('q','')
         if q: qs=qs.filter(**{('title' if resource in ('products','home') else 'name')+'__icontains':q})
         for field in ('game','category'):
@@ -118,7 +155,12 @@ def catalog(request, resource, pk=None):
                 except ValueError: raise serializers.ValidationError('筛选编号必须为整数')
         flag='is_published' if resource=='products' else 'is_enabled'
         if request.query_params.get('enabled') in ('true','false'): qs=qs.filter(**{flag:request.query_params['enabled']=='true'})
-        return page(request,qs,lambda o:serializer(o).data)
+        def serialize_product(o):
+            data = dict(serializer(o).data)
+            if resource == 'products':
+                data['homeplacements'] = placements_map.get(o.pk, [])
+            return data
+        return page(request,qs,serialize_product)
     if (request.method=='POST' and pk) or (request.method in ('PATCH','DELETE') and not pk): return Response(status=405)
     try:
         with transaction.atomic():
@@ -132,7 +174,11 @@ def catalog(request, resource, pk=None):
                 return Response({'id':pk,'deleted':True})
             form=serializer(obj,data=request.data,partial=bool(obj)); form.is_valid(raise_exception=True)
             saved=form.save(version=obj.version+1 if obj else 1)
+            # 商品保存后，若带 homeplacements 则同步首页投放
+            if resource == 'products' and 'homeplacements' in form.validated_data:
+                sync_product_home(saved, form.validated_data['homeplacements'])
             result=dict(serializer(saved).data)
+            result['homeplacements'] = list(HomeEntry.objects.filter(product=saved).values_list('kind', flat=True))
             AuditLog.objects.create(actor=request.user,action='update' if obj else 'create',resource=resource,resource_id=str(saved.pk),before=before,after=result)
             return Response(result,status=200 if obj else 201)
     except (ProtectedError, IntegrityError):

@@ -43,6 +43,29 @@ class ManagementTests(TestCase):
         response=self.web.patch(f'/api/v1/management/products/{self.product.id}/',{'game':other.id,'version':1},format='json')
         self.assertEqual(response.status_code,400)
 
+    def test_product_homeplacements_sync(self):
+        self.authenticate_web()
+        url=f'/api/v1/management/products/{self.product.id}/'
+        # 初始无投放
+        self.assertEqual(self.web.get('/api/v1/management/products/').data['results'][0]['homeplacements'],[])
+        # 投放 banner + special
+        response=self.web.patch(url,{'version':1,'homeplacements':['banner','special']},format='json')
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(sorted(response.data['homeplacements']),['banner','special'])
+        self.assertEqual(set(HomeEntry.objects.filter(product=self.product).values_list('kind',flat=True)),{'banner','special'})
+        # 改投放为只 popular：移除 banner/special，新增 popular
+        response=self.web.patch(url,{'version':2,'homeplacements':['popular']},format='json')
+        self.assertEqual(response.data['homeplacements'],['popular'])
+        self.assertEqual(set(HomeEntry.objects.filter(product=self.product).values_list('kind',flat=True)),{'popular'})
+        # 清空投放
+        response=self.web.patch(url,{'version':3,'homeplacements':[]},format='json')
+        self.assertEqual(response.data['homeplacements'],[])
+        self.assertEqual(HomeEntry.objects.filter(product=self.product).count(),0)
+        # 不传 homeplacements 时不影响现有首页配置
+        HomeEntry.objects.create(kind='banner',title='保留',product=self.product)
+        self.web.patch(url,{'version':4,'title':'改名'},format='json')
+        self.assertEqual(HomeEntry.objects.filter(product=self.product).count(),1)
+
     def test_catalog_delete_protects_references_and_audits_success(self):
         product_url=f'/api/v1/management/products/{self.product.pk}/'
         self.assertEqual(self.web.delete(product_url,{'version':1},format='json').status_code,403)
