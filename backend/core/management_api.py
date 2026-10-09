@@ -178,7 +178,8 @@ def catalog(request, resource, pk=None):
             if resource == 'products' and 'homeplacements' in form.validated_data:
                 sync_product_home(saved, form.validated_data['homeplacements'])
             result=dict(serializer(saved).data)
-            result['homeplacements'] = list(HomeEntry.objects.filter(product=saved).values_list('kind', flat=True))
+            if resource == 'products':
+                result['homeplacements'] = list(HomeEntry.objects.filter(product=saved).values_list('kind', flat=True))
             AuditLog.objects.create(actor=request.user,action='update' if obj else 'create',resource=resource,resource_id=str(saved.pk),before=before,after=result)
             return Response(result,status=200 if obj else 201)
     except (ProtectedError, IntegrityError):
