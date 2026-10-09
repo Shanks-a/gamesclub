@@ -43,6 +43,46 @@ class ManagementTests(TestCase):
         response=self.web.patch(f'/api/v1/management/products/{self.product.id}/',{'game':other.id,'version':1},format='json')
         self.assertEqual(response.status_code,400)
 
+    def test_product_homeplacements_sync(self):
+        self.authenticate_web()
+        url=f'/api/v1/management/products/{self.product.id}/'
+        # 初始无投放
+        self.assertEqual(self.web.get('/api/v1/management/products/').data['results'][0]['homeplacements'],[])
+        # 投放 banner + special
+        response=self.web.patch(url,{'version':1,'homeplacements':['banner','special']},format='json')
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(sorted(response.data['homeplacements']),['banner','special'])
+        self.assertEqual(set(HomeEntry.objects.filter(product=self.product).values_list('kind',flat=True)),{'banner','special'})
+        # 改投放为只 popular：移除 banner/special，新增 popular
+        response=self.web.patch(url,{'version':2,'homeplacements':['popular']},format='json')
+        self.assertEqual(response.data['homeplacements'],['popular'])
+        self.assertEqual(set(HomeEntry.objects.filter(product=self.product).values_list('kind',flat=True)),{'popular'})
+        # 清空投放
+        response=self.web.patch(url,{'version':3,'homeplacements':[]},format='json')
+        self.assertEqual(response.data['homeplacements'],[])
+        self.assertEqual(HomeEntry.objects.filter(product=self.product).count(),0)
+        # 不传 homeplacements 时不影响现有首页配置
+        HomeEntry.objects.create(kind='banner',title='保留',product=self.product)
+        self.web.patch(url,{'version':4,'title':'改名'},format='json')
+        self.assertEqual(HomeEntry.objects.filter(product=self.product).count(),1)
+
+    def test_home_entry_patch_and_create_ok(self):
+        """回归：首页配置自身的增改不能因 homeplacements 逻辑报错（ValueError: Must be Product instance）。"""
+        self.authenticate_web()
+        home=HomeEntry.objects.create(kind='banner',title='旧标题',product=self.product)
+        # PATCH 改标题和图片
+        response=self.web.patch(f'/api/v1/management/home/{home.pk}/',{'title':'新标题','image_url':'/media/covers/x.jpg','version':1},format='json')
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data['title'],'新标题')
+        home.refresh_from_db()
+        self.assertEqual(home.image_url,'/media/covers/x.jpg')
+        # POST 新建不跳转的轮播
+        response=self.web.post('/api/v1/management/home/',{'kind':'banner','title':'纯展示','target':'none','sort_order':0,'is_enabled':True},format='json')
+        self.assertEqual(response.status_code,201,response.data)
+        # 新建带商品的特价位
+        response=self.web.post('/api/v1/management/home/',{'kind':'special','title':'特价','product':self.product.id,'target':'product','sort_order':0,'is_enabled':True},format='json')
+        self.assertEqual(response.status_code,201,response.data)
+
     def test_catalog_delete_protects_references_and_audits_success(self):
         product_url=f'/api/v1/management/products/{self.product.pk}/'
         self.assertEqual(self.web.delete(product_url,{'version':1},format='json').status_code,403)
