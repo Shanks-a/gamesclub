@@ -22,13 +22,9 @@
 | 登录 | **真实微信登录**（`uni.login` → 后端 `code2session` 换 openid）+ 昵称 / 头像填写 |
 | 陪玩入驻 | 「我要加入」提交申请 → 管理员审核通过后进入工作台 |
 
-设计基准（`design/` 内 8 页 SVG，可导入 Figma）：
+移动端 8 页实际界面（真实运行截图，`design/shots/` 为源图，`design/make_preview.py` 可重新生成；P2 手绘 SVG 设计基准保留在 `design/*.svg`，可导入 Figma）：
 
-![首页设计](design/preview.png)
-
-实际运行效果（H5 端，全幅插画 banner 轮播）：
-
-![小程序首页实机效果](notices/e2e-screenshots/06-h5-home.png)
+![移动端实际界面](design/preview.png)
 
 ### 2. 管理后台 Web（Vue 3 + Element Plus）
 
