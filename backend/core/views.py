@@ -7,8 +7,8 @@ from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from .models import AccessToken, GamePartition, Product, ProductCategory, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile, WechatIdentity, Partner, PartnerApplication
-from .serializers import GameSerializer, CategorySerializer, ProductSerializer, FavoriteSerializer, OrderSerializer, ProductWriteSerializer, PartnerSerializer, PartnerApplicationSerializer
+from .models import AccessToken, GamePartition, Product, ProductCategory, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile, WechatIdentity, Partner, PartnerApplication, Review
+from .serializers import GameSerializer, CategorySerializer, ProductSerializer, FavoriteSerializer, OrderSerializer, ProductWriteSerializer, PartnerSerializer, PartnerApplicationSerializer, ReviewSerializer
 from .wechat import code2session, WechatLoginError
 
 def err(message, code, http=400):
@@ -290,9 +290,35 @@ def confirm_order(request, pk):
         try: order = Order.objects.select_for_update().get(pk=pk, user=request.user)
         except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
         if order.status != Order.Status.PENDING_CONFIRMATION: return err('当前状态不能验收', 'ORDER_STATE_CONFLICT', 409)
-        old = order.status; order.status = Order.Status.COMPLETED; order.version += 1; order.save(update_fields=['status','version','updated_at'])
+        old = order.status; order.status = Order.Status.COMPLETED; order.completed_at = timezone.now(); order.version += 1
+        order.save(update_fields=['status','completed_at','version','updated_at'])
         OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action='CONFIRM', actor=request.user)
         response = Response(OrderSerializer(order).data); save_idem(request.user, state, 'CONFIRM', order.id, response); return response
+
+@api_view(['GET','POST'])
+def review(request, pk):
+    """订单评价：仅已完成订单可评，一单一次。"""
+    if request.method == 'GET':
+        try: order = Order.objects.get(pk=pk, user=request.user)
+        except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
+        try: r = order.review
+        except Review.DoesNotExist: return err('尚未评价', 'NOT_FOUND', 404)
+        return Response(ReviewSerializer(r).data)
+    with transaction.atomic():
+        state, replay = get_idem(request.user, request, 'REVIEW')
+        if replay is not None: return replay
+        try: order = Order.objects.select_for_update().get(pk=pk, user=request.user)
+        except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
+        if order.status != Order.Status.COMPLETED: return err('订单完成后才能评价', 'ORDER_STATE_CONFLICT', 409)
+        if Review.objects.filter(order=order).exists(): return err('该订单已评价', 'REVIEW_EXISTS', 409)
+        rating = request.data.get('rating') if isinstance(request.data, dict) else None
+        content = (request.data.get('content') or '') if isinstance(request.data, dict) else ''
+        if type(rating) is not int or rating < 1 or rating > 5: return err('评分须为 1-5 的整数', 'INVALID_RATING')
+        if not isinstance(content, str) or len(content) > 2000: return err('评价内容不能超过2000字', 'INVALID_CONTENT')
+        r = Review.objects.create(order=order, user=request.user, rating=rating, content=content)
+        order.version += 1; order.save(update_fields=['version','updated_at'])
+        OrderStatusHistory.objects.create(order=order, from_status=order.status, to_status=order.status, action='REVIEW', actor=request.user)
+        response = Response(ReviewSerializer(r).data, status=201); save_idem(request.user, state, 'REVIEW', order.id, response); return response
 
 def _partner_of(request):
     """取当前用户的陪玩档案；无档案或接单关闭时返回 None。"""

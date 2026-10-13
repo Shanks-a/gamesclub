@@ -1,10 +1,11 @@
 import { request } from '../api/client'
-import type { ApiOrder } from '../api/types'
+import type { ApiOrder, ApiReview } from '../api/types'
 export function createOrder(productId:string,quantity:number,version:number,key:string,appointment?:{date:string;slot:string}){return request<ApiOrder>('/me/orders/',{method:'POST',data:{product_id:Number(productId),quantity,expected_product_version:version,...(appointment?.date?{appointment_date:appointment.date,appointment_slot:appointment.slot}:{})},header:{'Idempotency-Key':key}})}
 export function listOrders(){return request<ApiOrder[]>('/me/orders/')}
 export function mockPay(id:number,key:string){return request<ApiOrder>(`/me/orders/${id}/mock-pay/`,{method:'POST',data:{},header:{'Idempotency-Key':key}})}
 export function cancelOrder(id:number,key:string){return request<ApiOrder>(`/me/orders/${id}/cancel/`,{method:'POST',data:{},header:{'Idempotency-Key':key}})}
 export function confirmOrder(id:number,key:string){return request<ApiOrder>(`/me/orders/${id}/confirm/`,{method:'POST',data:{},header:{'Idempotency-Key':key}})}
+export function submitReview(id:number,key:string,rating:number,content:string){return request<ApiReview>(`/me/orders/${id}/review/`,{method:'POST',data:{rating,content},header:{'Idempotency-Key':key}})}
 // 陪玩工作台
 export function listPartnerOrders(){return request<ApiOrder[]>('/me/partner/orders/')}
 export function partnerAccept(id:number,key:string){return request<ApiOrder>(`/me/partner/orders/${id}/accept/`,{method:'POST',data:{},header:{'Idempotency-Key':key}})}

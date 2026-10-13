@@ -147,6 +147,11 @@ class Order(models.Model):
     partner = models.ForeignKey(Partner, on_delete=models.PROTECT, null=True, blank=True, related_name='orders', verbose_name='陪玩')
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING_PAYMENT)
     payment_status = models.CharField(max_length=16, choices=PaymentStatus.choices, default=PaymentStatus.UNPAID)
+    commission_bp = models.PositiveIntegerField('抽成基点', default=0)
+    aftersale_deadline = models.DateTimeField('售后截止时间', null=True, blank=True)
+    completed_at = models.DateTimeField('完成时间', null=True, blank=True)
+    refunded_amount_cents = models.PositiveIntegerField('累计退款（分）', default=0)
+    reserved_refund_cents = models.PositiveIntegerField('预留退款（分）', default=0)
     version = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True); updated_at = models.DateTimeField(auto_now=True)
     class Meta:
@@ -158,6 +163,16 @@ class OrderStatusHistory(models.Model):
     from_status = models.CharField(max_length=32, blank=True); to_status = models.CharField(max_length=32)
     action = models.CharField(max_length=40); actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     created_at = models.DateTimeField(auto_now_add=True)
+
+class Review(models.Model):
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='review', verbose_name='订单')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, verbose_name='评价用户')
+    rating = models.PositiveSmallIntegerField('评分', default=5)
+    content = models.TextField('评价内容', blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        verbose_name = '评价'
+        verbose_name_plural = '评价'
 
 class PaymentAttempt(models.Model):
     class Meta:

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import GamePartition, Product, ProductCategory, Favorite, Order, Partner, PartnerApplication
+from .models import GamePartition, Product, ProductCategory, Favorite, Order, Partner, PartnerApplication, Review
 class GameSerializer(serializers.ModelSerializer):
     class Meta: model=GamePartition; fields=['id','name','icon','sort_order','version']
 class CategorySerializer(serializers.ModelSerializer):
@@ -14,8 +14,17 @@ class ProductSerializer(serializers.ModelSerializer):
 class FavoriteSerializer(serializers.ModelSerializer):
     product = ProductSerializer(read_only=True)
     class Meta: model=Favorite; fields=['product','created_at']
+class ReviewSerializer(serializers.ModelSerializer):
+    class Meta: model=Review; fields=['id','order','user','rating','content','created_at']
 class OrderSerializer(serializers.ModelSerializer):
-    class Meta: model=Order; fields=['id','order_no','product','game_name_snapshot','product_title_snapshot','cover_url_snapshot','unit_price_cents','total_amount_cents','quantity','appointment_date','appointment_slot','partner','status','payment_status','version','created_at','updated_at']
+    review = serializers.SerializerMethodField()
+    def get_review(self, obj):
+        r = getattr(obj, 'review', None)
+        if r is None:
+            try: r = obj.review
+            except Review.DoesNotExist: r = None
+        return ReviewSerializer(r).data if r else None
+    class Meta: model=Order; fields=['id','order_no','product','game_name_snapshot','product_title_snapshot','cover_url_snapshot','unit_price_cents','total_amount_cents','quantity','appointment_date','appointment_slot','partner','status','payment_status','commission_bp','aftersale_deadline','completed_at','refunded_amount_cents','reserved_refund_cents','review','version','created_at','updated_at']
 class PartnerSerializer(serializers.ModelSerializer):
     game = GameSerializer(read_only=True)
     nickname = serializers.CharField(source='user.profile.nickname', read_only=True)
