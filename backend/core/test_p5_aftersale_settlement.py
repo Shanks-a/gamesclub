@@ -3,7 +3,7 @@ from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import AccessToken, UserProfile, GamePartition, Product, ProductCategory, Order, Partner, Review, AfterSaleCase, Refund, SystemConfig
+from .models import AccessToken, UserProfile, GamePartition, Product, ProductCategory, Order, Partner, Review, AfterSaleCase, Refund, SystemConfig, Settlement, SettlementItem
 
 
 @override_settings(DEBUG=True, ALLOW_MOCK_PAYMENT=True, ALLOW_DEV_LOGIN=True)
@@ -244,4 +244,132 @@ class AftersaleTests(P5Base):
         self.client.force_login(admin)
         resp = self.client.patch('/api/v1/management/settings/', {'commission_bp': 3000}, format='json')
         self.assertEqual(resp.status_code, 403)
+
+
+class SettlementTests(P5Base):
+    def _staff(self, name='admin'):
+        User = get_user_model()
+        admin = User.objects.create_user(username=name, is_staff=True)
+        return admin
+
+    def _staff_auth(self):
+        admin = self._staff()
+        self.client.force_login(admin)
+        return admin
+
+    def _settle_ready_order(self, user, product):
+        """造一个可结算的已完成订单：有 partner、已过售后截止。"""
+        partner_user = self._user('partner')
+        partner = Partner.objects.create(user=partner_user, game=product.game, is_active=True)
+        order = self._order(user, product, Order.Status.COMPLETED)
+        order.partner = partner
+        order.completed_at = timezone.now() - timezone.timedelta(hours=50)
+        order.aftersale_deadline = order.completed_at + timezone.timedelta(hours=48)
+        order.save(update_fields=['partner', 'completed_at', 'aftersale_deadline'])
+        return order
+
+    def test_settle_basic(self):
+        user = self._user('alice')
+        game = self._game(); product = self._product(game)  # total 2900
+        order = self._settle_ready_order(user, product)
+        self._staff_auth()
+        resp = self.client.post('/api/v1/management/settlements/', {'order_ids': [order.id]}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(len(resp.data['settled']), 1)
+        item = SettlementItem.objects.get(order=order)
+        # net = 2900, commission_bp=2000 → commission = round(2900*0.2)=580, partner_income=2320
+        self.assertEqual(item.net_income_cents, 2900)
+        self.assertEqual(item.commission_cents, 580)
+        self.assertEqual(item.partner_income_cents, 2320)
+
+    def test_settle_twice_conflict(self):
+        user = self._user('bob')
+        game = self._game(); product = self._product(game)
+        order = self._settle_ready_order(user, product)
+        self._staff_auth()
+        r1 = self.client.post('/api/v1/management/settlements/', {'order_ids': [order.id]}, format='json')
+        self.assertEqual(len(r1.data['settled']), 1)
+        r2 = self.client.post('/api/v1/management/settlements/', {'order_ids': [order.id]}, format='json')
+        self.assertEqual(len(r2.data['settled']), 0)
+        self.assertEqual(r2.data['errors'][0]['code'], 'ALREADY_SETTLED')
+
+    def test_settle_partial_refund_recalc(self):
+        user = self._user('carol')
+        game = self._game(); product = self._product(game)
+        order = self._settle_ready_order(user, product)
+        order.refunded_amount_cents = 1000
+        order.save(update_fields=['refunded_amount_cents'])
+        self._staff_auth()
+        resp = self.client.post('/api/v1/management/settlements/', {'order_ids': [order.id]}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        item = SettlementItem.objects.get(order=order)
+        # net = 2900 - 1000 = 1900, commission = round(1900*0.2)=380, partner = 1520
+        self.assertEqual(item.net_income_cents, 1900)
+        self.assertEqual(item.commission_cents, 380)
+        self.assertEqual(item.partner_income_cents, 1520)
+
+    def test_settle_full_refund_zero_income(self):
+        user = self._user('dave')
+        game = self._game(); product = self._product(game)
+        order = self._settle_ready_order(user, product)
+        order.refunded_amount_cents = order.total_amount_cents
+        order.save(update_fields=['refunded_amount_cents'])
+        self._staff_auth()
+        resp = self.client.post('/api/v1/management/settlements/', {'order_ids': [order.id]}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        item = SettlementItem.objects.get(order=order)
+        self.assertEqual(item.net_income_cents, 0)
+        self.assertEqual(item.partner_income_cents, 0)
+
+    def test_settle_rounding(self):
+        # 构造 net=2, commission_bp=2500 → 2*0.25=0.5 分，四舍五入到 1 分
+        user = self._user('eve')
+        game = self._game(); product = self._product(game)
+        partner_user = self._user('partner2')
+        partner = Partner.objects.create(user=partner_user, game=product.game, is_active=True)
+        order = self._order(user, product, Order.Status.COMPLETED)
+        order.partner = partner
+        order.total_amount_cents = 2
+        order.commission_bp = 2500
+        order.completed_at = timezone.now() - timezone.timedelta(hours=50)
+        order.aftersale_deadline = order.completed_at + timezone.timedelta(hours=48)
+        order.save(update_fields=['partner', 'total_amount_cents', 'commission_bp', 'completed_at', 'aftersale_deadline'])
+        self._staff_auth()
+        self.client.post('/api/v1/management/settlements/', {'order_ids': [order.id]}, format='json')
+        item = SettlementItem.objects.get(order=order)
+        self.assertEqual(item.commission_cents, 1)
+        self.assertEqual(item.partner_income_cents, 1)
+
+    def test_settle_not_ready_open_aftersale(self):
+        user = self._user('frank')
+        game = self._game(); product = self._product(game)
+        order = self._settle_ready_order(user, product)
+        AfterSaleCase.objects.create(order=order, user=user, case_no='ASX', amount_cents=100, status=AfterSaleCase.Status.OPEN)
+        self._staff_auth()
+        resp = self.client.post('/api/v1/management/settlements/', {'order_ids': [order.id]}, format='json')
+        self.assertEqual(len(resp.data['settled']), 0)
+        self.assertEqual(resp.data['errors'][0]['code'], 'SETTLEMENT_NOT_READY')
+
+    def test_settle_not_ready_pending_refund(self):
+        user = self._user('grace')
+        game = self._game(); product = self._product(game)
+        order = self._settle_ready_order(user, product)
+        Refund.objects.create(order=order, refund_no='RFX', amount_cents=100, status=Refund.Status.UNKNOWN)
+        self._staff_auth()
+        resp = self.client.post('/api/v1/management/settlements/', {'order_ids': [order.id]}, format='json')
+        self.assertEqual(len(resp.data['settled']), 0)
+        self.assertEqual(resp.data['errors'][0]['code'], 'SETTLEMENT_NOT_READY')
+
+    def test_settle_requires_partner(self):
+        user = self._user('henry')
+        game = self._game(); product = self._product(game)
+        order = self._order(user, product, Order.Status.COMPLETED)
+        order.completed_at = timezone.now() - timezone.timedelta(hours=50)
+        order.aftersale_deadline = order.completed_at + timezone.timedelta(hours=48)
+        order.save(update_fields=['completed_at', 'aftersale_deadline'])
+        self._staff_auth()
+        resp = self.client.post('/api/v1/management/settlements/', {'order_ids': [order.id]}, format='json')
+        self.assertEqual(len(resp.data['settled']), 0)
+        self.assertEqual(resp.data['errors'][0]['code'], 'NO_PARTNER')
+
 

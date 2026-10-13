@@ -241,6 +241,29 @@ class Evidence(models.Model):
         verbose_name = '售后凭证'
         verbose_name_plural = '售后凭证'
 
+class Settlement(models.Model):
+    batch_no = models.CharField('批次号', max_length=32, unique=True)
+    executed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, verbose_name='结算人')
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        verbose_name = '结算批次'
+        verbose_name_plural = '结算批次'
+
+class SettlementItem(models.Model):
+    settlement = models.ForeignKey(Settlement, on_delete=models.CASCADE, related_name='items', verbose_name='结算批次')
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, unique=True, related_name='settlement_item', verbose_name='订单')
+    partner = models.ForeignKey(Partner, on_delete=models.PROTECT, verbose_name='陪玩')
+    paid_amount_cents = models.PositiveIntegerField('实收（分）')
+    refunded_amount_cents = models.PositiveIntegerField('已退款（分）')
+    net_income_cents = models.PositiveIntegerField('净收入（分）')
+    commission_bp = models.PositiveIntegerField('抽成基点')
+    commission_cents = models.PositiveIntegerField('抽成（分）')
+    partner_income_cents = models.PositiveIntegerField('陪玩收益（分）')
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        verbose_name = '结算明细'
+        verbose_name_plural = '结算明细'
+
 class PaymentAttempt(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=['order'], condition=models.Q(status='SUCCEEDED'), name='one_successful_payment_per_order')]

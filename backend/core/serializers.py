@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import GamePartition, Product, ProductCategory, Favorite, Order, Partner, PartnerApplication, Review, SystemConfig, AfterSaleCase, Refund, Evidence
+from .models import GamePartition, Product, ProductCategory, Favorite, Order, Partner, PartnerApplication, Review, SystemConfig, AfterSaleCase, Refund, Evidence, Settlement, SettlementItem
 class GameSerializer(serializers.ModelSerializer):
     class Meta: model=GamePartition; fields=['id','name','icon','sort_order','version']
 class CategorySerializer(serializers.ModelSerializer):
@@ -57,3 +57,10 @@ class AfterSaleCaseSerializer(serializers.ModelSerializer):
     order_no = serializers.CharField(source='order.order_no', read_only=True)
     product_title = serializers.CharField(source='order.product_title_snapshot', read_only=True)
     class Meta: model=AfterSaleCase; fields=['id','case_no','order','order_no','product_title','user','nickname','amount_cents','reason','status','resolution','reviewed_by','reviewed_at','evidences','refunds','created_at','updated_at']
+class SettlementItemSerializer(serializers.ModelSerializer):
+    order_no = serializers.CharField(source='order.order_no', read_only=True)
+    nickname = serializers.CharField(source='partner.user.profile.nickname', read_only=True)
+    class Meta: model=SettlementItem; fields=['id','order','order_no','partner','nickname','paid_amount_cents','refunded_amount_cents','net_income_cents','commission_bp','commission_cents','partner_income_cents','created_at']
+class SettlementSerializer(serializers.ModelSerializer):
+    items = SettlementItemSerializer(many=True, read_only=True)
+    class Meta: model=Settlement; fields=['id','batch_no','executed_by','items','created_at']

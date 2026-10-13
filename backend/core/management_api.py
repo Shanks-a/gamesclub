@@ -17,8 +17,8 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import IsAdminUser, AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
-from .models import GamePartition, ProductCategory, Product, HomeEntry, AuditLog, Order, OrderStatusHistory, Partner, PartnerApplication, AfterSaleCase, Refund, SystemConfig, get_config_int
-from .serializers import ProductSerializer, OrderSerializer, PartnerSerializer, PartnerApplicationSerializer, AfterSaleCaseSerializer, RefundSerializer
+from .models import GamePartition, ProductCategory, Product, HomeEntry, AuditLog, Order, OrderStatusHistory, Partner, PartnerApplication, AfterSaleCase, Refund, SystemConfig, get_config_int, Settlement, SettlementItem
+from .serializers import ProductSerializer, OrderSerializer, PartnerSerializer, PartnerApplicationSerializer, AfterSaleCaseSerializer, RefundSerializer, SettlementSerializer
 
 class LoginThrottle(AnonRateThrottle):
     rate = '10/min'
@@ -624,3 +624,65 @@ def settings(request):
         result['aftersale_window_hours'] = v
     AuditLog.objects.create(actor=request.user, action='update_settings', resource='settings', resource_id='', after=result)
     return Response({'commission_bp': get_config_int('commission_bp', 2000), 'aftersale_window_hours': get_config_int('aftersale_window_hours', 48)})
+
+# ============ P5 结算 ============
+
+def _settle_one(order):
+    """结算单个订单，返回结算明细对象；失败抛出带错误码的 ValueError。"""
+    net = order.total_amount_cents - order.refunded_amount_cents
+    if net < 0: net = 0
+    commission = (net * order.commission_bp + 5000) // 10000
+    partner_income = net - commission
+    if partner_income < 0: partner_income = 0
+    return SettlementItem(
+        order=order,
+        partner=order.partner,
+        paid_amount_cents=order.total_amount_cents,
+        refunded_amount_cents=order.refunded_amount_cents,
+        net_income_cents=net,
+        commission_bp=order.commission_bp,
+        commission_cents=commission,
+        partner_income_cents=partner_income,
+    )
+
+@endpoint(['GET','POST'])
+def settlements(request, pk=None):
+    if request.method == 'GET':
+        if pk:
+            obj = Settlement.objects.prefetch_related('items__order','items__partner__user__profile').filter(pk=pk).first()
+            return Response(SettlementSerializer(obj).data) if obj else Response(status=404)
+        qs = Settlement.objects.prefetch_related('items').order_by('-created_at')
+        return page(request, qs, lambda o: SettlementSerializer(o).data)
+    # POST 发起结算：body {order_ids: [..]}
+    order_ids = request.data.get('order_ids') if isinstance(request.data, dict) else None
+    if not isinstance(order_ids, list) or not order_ids or any(type(x) is not int for x in order_ids):
+        return Response({'error':{'message':'请提供订单编号列表 order_ids','code':'INVALID_ORDER_IDS'}},status=400)
+    settled, errors = [], []
+    with transaction.atomic():
+        settlement = Settlement.objects.create(batch_no='ST'+uuid.uuid4().hex[:30], executed_by=request.user)
+        for oid in order_ids:
+            try:
+                order = Order.objects.select_for_update().get(pk=oid)
+            except Order.DoesNotExist:
+                errors.append({'order_id': oid, 'code': 'NOT_FOUND'}); continue
+            if order.status != Order.Status.COMPLETED or order.payment_status != Order.PaymentStatus.PAID:
+                errors.append({'order_id': oid, 'code': 'SETTLEMENT_NOT_READY'}); continue
+            if order.aftersale_deadline is None:
+                errors.append({'order_id': oid, 'code': 'SETTLEMENT_NOT_READY'}); continue
+            from django.utils import timezone as tz
+            if tz.now() <= order.aftersale_deadline:
+                errors.append({'order_id': oid, 'code': 'SETTLEMENT_NOT_READY'}); continue
+            if AfterSaleCase.objects.filter(order=order, status=AfterSaleCase.Status.OPEN).exists():
+                errors.append({'order_id': oid, 'code': 'SETTLEMENT_NOT_READY'}); continue
+            if Refund.objects.filter(order=order, status__in=(Refund.Status.PENDING, Refund.Status.UNKNOWN)).exists():
+                errors.append({'order_id': oid, 'code': 'SETTLEMENT_NOT_READY'}); continue
+            if SettlementItem.objects.filter(order=order).exists():
+                errors.append({'order_id': oid, 'code': 'ALREADY_SETTLED'}); continue
+            if not order.partner:
+                errors.append({'order_id': oid, 'code': 'NO_PARTNER'}); continue
+            item = _settle_one(order)
+            item.settlement = settlement
+            item.save()
+            settled.append({'order_id': oid, 'partner_income_cents': item.partner_income_cents})
+            AuditLog.objects.create(actor=request.user, action='settle_order', resource='settlement', resource_id=str(settlement.id), after={'order_id': oid, 'partner_income_cents': item.partner_income_cents})
+    return Response({'batch_no': settlement.batch_no, 'settled': settled, 'errors': errors})
