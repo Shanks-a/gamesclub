@@ -174,6 +174,73 @@ class Review(models.Model):
         verbose_name = '评价'
         verbose_name_plural = '评价'
 
+class SystemConfig(models.Model):
+    key = models.CharField('配置键', max_length=64, unique=True)
+    value_json = models.JSONField('配置值', default=dict)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    class Meta:
+        verbose_name = '系统配置'
+        verbose_name_plural = '系统配置'
+
+def get_config_int(key, default):
+    """读取整数型系统配置，缺失或异常时返回默认值。"""
+    try:
+        val = SystemConfig.objects.get(key=key).value_json
+        if isinstance(val, dict):
+            v = val.get('value')
+        else:
+            v = val
+        return int(v)
+    except (SystemConfig.DoesNotExist, TypeError, ValueError):
+        return default
+
+class AfterSaleCase(models.Model):
+    class Status(models.TextChoices):
+        OPEN='OPEN'; APPROVED='APPROVED'; REJECTED='REJECTED'; CLOSED='CLOSED'
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name='aftersale_cases', verbose_name='订单')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, verbose_name='申请人')
+    case_no = models.CharField('案件号', max_length=32, unique=True)
+    amount_cents = models.PositiveIntegerField('申请退款金额（分）')
+    reason = models.TextField('申请说明', blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN)
+    resolution = models.TextField('复核结论', blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='reviewed_aftersales')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True); updated_at = models.DateTimeField(auto_now=True)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['order'], condition=models.Q(status='OPEN'), name='one_open_aftersale_per_order')]
+        verbose_name = '售后案件'
+        verbose_name_plural = '售后案件'
+
+class Refund(models.Model):
+    class Status(models.TextChoices):
+        PENDING='PENDING'; SUCCEEDED='SUCCEEDED'; FAILED='FAILED'; UNKNOWN='UNKNOWN'
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name='refunds', verbose_name='订单')
+    case = models.ForeignKey(AfterSaleCase, on_delete=models.PROTECT, null=True, blank=True, related_name='refunds', verbose_name='售后案件')
+    refund_no = models.CharField('退款号', max_length=32, unique=True)
+    amount_cents = models.PositiveIntegerField('退款金额（分）')
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    reason = models.CharField('退款原因', max_length=255, blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True); updated_at = models.DateTimeField(auto_now=True)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['order'], condition=models.Q(status='PENDING'), name='one_pending_refund_per_order')]
+        verbose_name = '退款'
+        verbose_name_plural = '退款'
+
+class Evidence(models.Model):
+    case = models.ForeignKey(AfterSaleCase, on_delete=models.CASCADE, null=True, blank=True, related_name='evidences', verbose_name='售后案件')
+    uploader = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, verbose_name='上传者')
+    file_path = models.CharField('文件路径', max_length=255)
+    mime_type = models.CharField('MIME 类型', max_length=32)
+    size_bytes = models.PositiveIntegerField('文件大小（字节）')
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        verbose_name = '售后凭证'
+        verbose_name_plural = '售后凭证'
+
 class PaymentAttempt(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=['order'], condition=models.Q(status='SUCCEEDED'), name='one_successful_payment_per_order')]

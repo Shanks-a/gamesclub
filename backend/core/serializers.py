@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import GamePartition, Product, ProductCategory, Favorite, Order, Partner, PartnerApplication, Review
+from .models import GamePartition, Product, ProductCategory, Favorite, Order, Partner, PartnerApplication, Review, SystemConfig, AfterSaleCase, Refund, Evidence
 class GameSerializer(serializers.ModelSerializer):
     class Meta: model=GamePartition; fields=['id','name','icon','sort_order','version']
 class CategorySerializer(serializers.ModelSerializer):
@@ -45,3 +45,15 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         if category and game and category.game_id != game.id:
             raise serializers.ValidationError({'category_id': '商品类型必须属于同一个游戏'})
         return attrs
+
+class EvidenceSerializer(serializers.ModelSerializer):
+    class Meta: model=Evidence; fields=['id','case','file_path','mime_type','size_bytes','created_at']
+class RefundSerializer(serializers.ModelSerializer):
+    class Meta: model=Refund; fields=['id','refund_no','order','case','amount_cents','status','reason','reviewed_by','reviewed_at','created_at']
+class AfterSaleCaseSerializer(serializers.ModelSerializer):
+    evidences = EvidenceSerializer(many=True, read_only=True)
+    refunds = RefundSerializer(many=True, read_only=True)
+    nickname = serializers.CharField(source='user.profile.nickname', read_only=True)
+    order_no = serializers.CharField(source='order.order_no', read_only=True)
+    product_title = serializers.CharField(source='order.product_title_snapshot', read_only=True)
+    class Meta: model=AfterSaleCase; fields=['id','case_no','order','order_no','product_title','user','nickname','amount_cents','reason','status','resolution','reviewed_by','reviewed_at','evidences','refunds','created_at','updated_at']

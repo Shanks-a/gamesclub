@@ -1,4 +1,5 @@
 import hashlib, json, uuid
+from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -7,8 +8,8 @@ from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from .models import AccessToken, GamePartition, Product, ProductCategory, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile, WechatIdentity, Partner, PartnerApplication, Review
-from .serializers import GameSerializer, CategorySerializer, ProductSerializer, FavoriteSerializer, OrderSerializer, ProductWriteSerializer, PartnerSerializer, PartnerApplicationSerializer, ReviewSerializer
+from .models import AccessToken, GamePartition, Product, ProductCategory, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile, WechatIdentity, Partner, PartnerApplication, Review, AfterSaleCase, Evidence, get_config_int
+from .serializers import GameSerializer, CategorySerializer, ProductSerializer, FavoriteSerializer, OrderSerializer, ProductWriteSerializer, PartnerSerializer, PartnerApplicationSerializer, ReviewSerializer, AfterSaleCaseSerializer, RefundSerializer
 from .wechat import code2session, WechatLoginError
 
 def err(message, code, http=400):
@@ -185,7 +186,7 @@ def orders(request):
         if not p.is_published or not game.is_enabled or not category or not category.is_enabled or category.game_id != game.id: return err('商品已下架', 'PRODUCT_UNAVAILABLE', 409)
         if expected != p.version: return err('商品已更新，请重新确认价格', 'PRODUCT_VERSION_CONFLICT', 409)
         if quantity < p.min_quantity or quantity > p.max_quantity: return err('购买数量超出范围', 'INVALID_QUANTITY')
-        order = Order.objects.create(order_no='GC'+uuid.uuid4().hex[:30], user=request.user, product=p, game_name_snapshot=game.name, product_title_snapshot=p.title, cover_url_snapshot=p.cover_url, unit_price_cents=p.price_cents, total_amount_cents=p.price_cents*quantity, quantity=quantity, appointment_date=appt_date, appointment_slot=appt_slot)
+        order = Order.objects.create(order_no='GC'+uuid.uuid4().hex[:30], user=request.user, product=p, game_name_snapshot=game.name, product_title_snapshot=p.title, cover_url_snapshot=p.cover_url, unit_price_cents=p.price_cents, total_amount_cents=p.price_cents*quantity, quantity=quantity, appointment_date=appt_date, appointment_slot=appt_slot, commission_bp=get_config_int('commission_bp', 2000))
         OrderStatusHistory.objects.create(order=order, to_status=order.status, action='CREATE', actor=request.user)
         response = Response(OrderSerializer(order).data, status=201); save_idem(request.user, state, 'CREATE_ORDER', order.id, response); return response
 
@@ -290,8 +291,10 @@ def confirm_order(request, pk):
         try: order = Order.objects.select_for_update().get(pk=pk, user=request.user)
         except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
         if order.status != Order.Status.PENDING_CONFIRMATION: return err('当前状态不能验收', 'ORDER_STATE_CONFLICT', 409)
-        old = order.status; order.status = Order.Status.COMPLETED; order.completed_at = timezone.now(); order.version += 1
-        order.save(update_fields=['status','completed_at','version','updated_at'])
+        old = order.status; order.status = Order.Status.COMPLETED; order.completed_at = timezone.now()
+        order.aftersale_deadline = order.completed_at + timedelta(hours=get_config_int('aftersale_window_hours', 48))
+        order.version += 1
+        order.save(update_fields=['status','completed_at','aftersale_deadline','version','updated_at'])
         OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action='CONFIRM', actor=request.user)
         response = Response(OrderSerializer(order).data); save_idem(request.user, state, 'CONFIRM', order.id, response); return response
 
@@ -360,3 +363,64 @@ def partner_reject(request, pk): return _partner_order_action(request, pk, 'REJE
 def partner_start(request, pk): return _partner_order_action(request, pk, 'START', Order.Status.ACCEPTED, Order.Status.IN_SERVICE)
 @api_view(['POST'])
 def partner_complete(request, pk): return _partner_order_action(request, pk, 'COMPLETE', Order.Status.IN_SERVICE, Order.Status.PENDING_CONFIRMATION)
+
+# ============ P5 售后与退款 ============
+
+def _aftersale_window_open(order):
+    """判断订单是否在售后窗口内。服务中/待验收始终可申请；完成后须在截止时间内。"""
+    if order.status in (Order.Status.IN_SERVICE, Order.Status.PENDING_CONFIRMATION):
+        return True
+    if order.status == Order.Status.COMPLETED:
+        return order.aftersale_deadline is not None and timezone.now() <= order.aftersale_deadline
+    return False
+
+@api_view(['GET','POST'])
+def aftersale(request, pk):
+    """申请/查询售后案件。"""
+    if request.method == 'GET':
+        try: order = Order.objects.get(pk=pk, user=request.user)
+        except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
+        cases = AfterSaleCase.objects.filter(order=order).prefetch_related('evidences','refunds').order_by('-created_at')
+        return Response(AfterSaleCaseSerializer(cases, many=True).data)
+    with transaction.atomic():
+        state, replay = get_idem(request.user, request, 'AFTERSALE')
+        if replay is not None: return replay
+        try: order = Order.objects.select_for_update().get(pk=pk, user=request.user)
+        except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
+        if order.payment_status != Order.PaymentStatus.PAID: return err('订单未付款，无需售后', 'ORDER_STATE_CONFLICT', 409)
+        if not _aftersale_window_open(order): return err('已过售后申请时限', 'AFTERSALE_WINDOW_CLOSED', 409)
+        if AfterSaleCase.objects.filter(order=order, status=AfterSaleCase.Status.OPEN).exists(): return err('该订单已有处理中的售后申请', 'AFTERSALE_EXISTS', 409)
+        amount = request.data.get('amount_cents') if isinstance(request.data, dict) else None
+        reason = (request.data.get('reason') or '') if isinstance(request.data, dict) else ''
+        if type(amount) is not int or amount <= 0: return err('退款金额必须为正整数（分）', 'INVALID_AMOUNT')
+        if not isinstance(reason, str) or len(reason) > 2000: return err('申请说明不能超过2000字', 'INVALID_REASON')
+        refundable = order.total_amount_cents - order.refunded_amount_cents - order.reserved_refund_cents
+        if amount > refundable: return err('退款金额超过可退金额', 'REFUND_AMOUNT_EXCEEDED', 409)
+        case = AfterSaleCase.objects.create(order=order, user=request.user, case_no='AS'+uuid.uuid4().hex[:30], amount_cents=amount, reason=reason)
+        # 挂接上传的凭证
+        evidence_ids = request.data.get('evidence_ids') or []
+        if evidence_ids:
+            Evidence.objects.filter(id__in=evidence_ids, uploader=request.user, case=None).update(case=case)
+        order.version += 1; order.save(update_fields=['version','updated_at'])
+        OrderStatusHistory.objects.create(order=order, from_status=order.status, to_status=order.status, action='AFTERSALE_APPLY', actor=request.user)
+        response = Response(AfterSaleCaseSerializer(case).data, status=201); save_idem(request.user, state, 'AFTERSALE', order.id, response); return response
+
+@api_view(['POST'])
+def upload_evidence(request):
+    """上传售后图片凭证（私有存储，先不挂案件，申请时挂接）。"""
+    from PIL import Image, UnidentifiedImageError
+    import io as _io
+    from django.core.files.base import ContentFile
+    from django.core.files.storage import default_storage
+    import uuid as _uuid
+    file = request.FILES.get('file')
+    if not file or file.size > 5*1024*1024: return err('请选择不超过5MB的图片', 'INVALID_IMAGE')
+    try:
+        picture = Image.open(file)
+        if picture.format not in ('JPEG','PNG','WEBP') or picture.width*picture.height > 20_000_000: raise ValueError()
+        picture.load(); picture = picture.convert('RGB'); output = _io.BytesIO(); picture.save(output, format='JPEG', quality=90)
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+        return err('仅支持有效的 JPEG、PNG、WebP 图片', 'INVALID_IMAGE')
+    path = default_storage.save('evidence/' + _uuid.uuid4().hex + '.jpg', ContentFile(output.getvalue()))
+    ev = Evidence.objects.create(uploader=request.user, file_path=path, mime_type='image/jpeg', size_bytes=output.tell())
+    return Response({'id': ev.id, 'url': default_storage.url(path)}, status=201)

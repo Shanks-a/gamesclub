@@ -17,8 +17,8 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import IsAdminUser, AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
-from .models import GamePartition, ProductCategory, Product, HomeEntry, AuditLog, Order, OrderStatusHistory, Partner, PartnerApplication
-from .serializers import ProductSerializer, OrderSerializer, PartnerSerializer, PartnerApplicationSerializer
+from .models import GamePartition, ProductCategory, Product, HomeEntry, AuditLog, Order, OrderStatusHistory, Partner, PartnerApplication, AfterSaleCase, Refund, SystemConfig, get_config_int
+from .serializers import ProductSerializer, OrderSerializer, PartnerSerializer, PartnerApplicationSerializer, AfterSaleCaseSerializer, RefundSerializer
 
 class LoginThrottle(AnonRateThrottle):
     rate = '10/min'
@@ -504,3 +504,123 @@ def order_delete(request, pk):
         order.delete()
         AuditLog.objects.create(actor=request.user, action='delete_order', resource='order', resource_id=str(pk), before=before)
     return Response({'id': pk, 'deleted': True})
+
+# ============ P5 售后复核 / 退款 / 结算配置 ============
+
+@endpoint(['GET'])
+def aftersales(request, pk=None):
+    if pk:
+        obj = AfterSaleCase.objects.select_related('user__profile','order').prefetch_related('evidences','refunds').filter(pk=pk).first()
+        return Response(AfterSaleCaseSerializer(obj).data) if obj else Response(status=404)
+    qs = AfterSaleCase.objects.select_related('user__profile','order').prefetch_related('evidences','refunds').order_by('-created_at')
+    if request.query_params.get('status'): qs = qs.filter(status=request.query_params['status'])
+    if request.query_params.get('q'): qs = qs.filter(Q(case_no__icontains=request.query_params['q']) | Q(order__order_no__icontains=request.query_params['q']))
+    return page(request, qs, lambda o: AfterSaleCaseSerializer(o).data)
+
+@endpoint(['POST'])
+def aftersale_review(request, pk):
+    """复核售后：approve 建预留退款；reject 直接驳回。"""
+    from django.utils import timezone as tz
+    decision = request.data.get('decision')
+    resolution = request.data.get('resolution') or ''
+    if decision not in ('approve', 'reject'): return Response({'error':{'message':'decision 须为 approve 或 reject','code':'INVALID_DECISION'}},status=400)
+    with transaction.atomic():
+        try: case = AfterSaleCase.objects.select_for_update().select_related('order').get(pk=pk)
+        except AfterSaleCase.DoesNotExist: return Response(status=404)
+        if case.status != AfterSaleCase.Status.OPEN:
+            return Response({'error':{'message':'该售后已处理','code':'CASE_PROCESSED'}},status=409)
+        order = Order.objects.select_for_update().get(pk=case.order_id)
+        case.reviewed_by = request.user; case.reviewed_at = tz.now(); case.resolution = resolution
+        if decision == 'reject':
+            case.status = AfterSaleCase.Status.REJECTED
+            case.save(update_fields=['status','resolution','reviewed_by','reviewed_at','updated_at'])
+            AuditLog.objects.create(actor=request.user, action='reject_aftersale', resource='aftersale', resource_id=str(pk), after={'status': case.status})
+            return Response(AfterSaleCaseSerializer(case).data)
+        # approve：校验可退金额并创建预留退款
+        refundable = order.total_amount_cents - order.refunded_amount_cents - order.reserved_refund_cents
+        if case.amount_cents > refundable:
+            return Response({'error':{'message':'退款金额超过可退金额','code':'REFUND_AMOUNT_EXCEEDED'}},status=409)
+        refund = Refund.objects.create(order=order, case=case, refund_no='RF'+uuid.uuid4().hex[:30], amount_cents=case.amount_cents, status=Refund.Status.PENDING, reviewed_by=request.user, reviewed_at=tz.now())
+        order.reserved_refund_cents += case.amount_cents; order.version += 1
+        order.save(update_fields=['reserved_refund_cents','version','updated_at'])
+        case.status = AfterSaleCase.Status.APPROVED
+        case.save(update_fields=['status','resolution','reviewed_by','reviewed_at','updated_at'])
+        OrderStatusHistory.objects.create(order=order, from_status=order.status, to_status=order.status, action='AFTERSALE_APPROVE', actor=request.user)
+        AuditLog.objects.create(actor=request.user, action='approve_aftersale', resource='aftersale', resource_id=str(pk), after={'status': case.status, 'refund_id': refund.id})
+        return Response(AfterSaleCaseSerializer(case).data)
+
+@endpoint(['GET','POST'])
+def refund_execute(request, pk):
+    """模拟退款执行：success / fail / unknown。"""
+    from django.utils import timezone as tz
+    if request.method == 'GET':
+        obj = Refund.objects.select_related('order','case').filter(pk=pk).first()
+        return Response(RefundSerializer(obj).data) if obj else Response(status=404)
+    result = request.data.get('result')
+    if result not in ('success', 'fail', 'unknown'): return Response({'error':{'message':'result 须为 success/fail/unknown','code':'INVALID_RESULT'}},status=400)
+    with transaction.atomic():
+        try: refund = Refund.objects.select_for_update().select_related('order').get(pk=pk)
+        except Refund.DoesNotExist: return Response(status=404)
+        if refund.status != Refund.Status.PENDING:
+            return Response({'error':{'message':'该退款已处理','code':'REFUND_PROCESSED'}},status=409)
+        order = Order.objects.select_for_update().get(pk=refund.order_id)
+        if result == 'success':
+            refund.status = Refund.Status.SUCCEEDED; refund.reviewed_at = tz.now()
+            refund.save(update_fields=['status','reviewed_at','updated_at'])
+            order.refunded_amount_cents += refund.amount_cents
+            order.reserved_refund_cents = max(0, order.reserved_refund_cents - refund.amount_cents)
+            order.version += 1
+            order.save(update_fields=['refunded_amount_cents','reserved_refund_cents','version','updated_at'])
+            if refund.case_id:
+                AfterSaleCase.objects.filter(pk=refund.case_id).update(status=AfterSaleCase.Status.CLOSED)
+            OrderStatusHistory.objects.create(order=order, from_status=order.status, to_status=order.status, action='REFUND_SUCCESS', actor=request.user)
+        elif result == 'fail':
+            refund.status = Refund.Status.FAILED; refund.reviewed_at = tz.now()
+            refund.save(update_fields=['status','reviewed_at','updated_at'])
+            order.reserved_refund_cents = max(0, order.reserved_refund_cents - refund.amount_cents)
+            order.version += 1
+            order.save(update_fields=['reserved_refund_cents','version','updated_at'])
+        else:  # unknown：保留预留，阻止结算
+            refund.status = Refund.Status.UNKNOWN; refund.reviewed_at = tz.now()
+            refund.save(update_fields=['status','reviewed_at','updated_at'])
+        AuditLog.objects.create(actor=request.user, action='execute_refund', resource='refund', resource_id=str(pk), after={'status': refund.status, 'amount_cents': refund.amount_cents})
+        return Response(RefundSerializer(refund).data)
+
+@endpoint(['POST'])
+def cancel_refund(request, pk):
+    """已付款未开始：审核取消并全额退款。"""
+    from django.utils import timezone as tz
+    with transaction.atomic():
+        try: order = Order.objects.select_for_update().get(pk=pk)
+        except Order.DoesNotExist: return Response(status=404)
+        if order.payment_status != Order.PaymentStatus.PAID or order.status not in (Order.Status.PENDING_ARRANGEMENT, Order.Status.PENDING_ACCEPTANCE, Order.Status.ACCEPTED):
+            return Response({'error':{'message':'当前状态不能取消退款','code':'ORDER_STATE_CONFLICT'}},status=409)
+        refund = Refund.objects.create(order=order, refund_no='RF'+uuid.uuid4().hex[:30], amount_cents=order.total_amount_cents, status=Refund.Status.SUCCEEDED, reason='未开始取消全额退款', reviewed_by=request.user, reviewed_at=tz.now())
+        order.refunded_amount_cents = order.total_amount_cents
+        old = order.status; order.status = Order.Status.CANCELLED; order.version += 1
+        order.save(update_fields=['refunded_amount_cents','status','version','updated_at'])
+        OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action='CANCEL_REFUND', actor=request.user)
+        AuditLog.objects.create(actor=request.user, action='cancel_refund', resource='order', resource_id=str(pk), after={'refund_id': refund.id, 'amount_cents': refund.amount_cents})
+        return Response(OrderSerializer(order).data)
+
+@endpoint(['GET','PATCH'])
+def settings(request):
+    if request.method == 'GET':
+        return Response({'commission_bp': get_config_int('commission_bp', 2000), 'aftersale_window_hours': get_config_int('aftersale_window_hours', 48)})
+    # PATCH：仅 superuser 可写
+    if not request.user.is_superuser:
+        return Response({'error':{'message':'仅超级管理员可修改系统配置','code':'FORBIDDEN'}},status=403)
+    data = request.data if isinstance(request.data, dict) else {}
+    result = {}
+    if 'commission_bp' in data:
+        v = data['commission_bp']
+        if type(v) is not int or v < 0 or v > 10000: return Response({'error':{'message':'抽成比例须为 0-10000 的整数基点','code':'INVALID_CONFIG'}},status=400)
+        SystemConfig.objects.update_or_create(key='commission_bp', defaults={'value_json': {'value': v}, 'updated_by': request.user})
+        result['commission_bp'] = v
+    if 'aftersale_window_hours' in data:
+        v = data['aftersale_window_hours']
+        if type(v) is not int or v <= 0: return Response({'error':{'message':'售后时限须为正整数小时','code':'INVALID_CONFIG'}},status=400)
+        SystemConfig.objects.update_or_create(key='aftersale_window_hours', defaults={'value_json': {'value': v}, 'updated_by': request.user})
+        result['aftersale_window_hours'] = v
+    AuditLog.objects.create(actor=request.user, action='update_settings', resource='settings', resource_id='', after=result)
+    return Response({'commission_bp': get_config_int('commission_bp', 2000), 'aftersale_window_hours': get_config_int('aftersale_window_hours', 48)})
