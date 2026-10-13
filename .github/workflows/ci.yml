@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main, workbuddy/main-cf29d12c]
+  pull_request:
+
+jobs:
+  backend:
+    name: 后端测试
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: gamesclub
+          POSTGRES_USER: gamesclub
+          POSTGRES_PASSWORD: gamesclub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gamesclub"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: 安装依赖
+        run: pip install -r backend/requirements.txt
+      - name: 迁移
+        env:
+          DATABASE_URL: postgresql://gamesclub:gamesclub@127.0.0.1:5432/gamesclub
+          DJANGO_SECRET_KEY: ci-secret-key-not-for-production
+          DJANGO_DEBUG: '0'
+        run: python manage.py migrate --noinput
+        working-directory: backend
+      - name: 运行测试
+        env:
+          DATABASE_URL: postgresql://gamesclub:gamesclub@127.0.0.1:5432/gamesclub
+          DJANGO_SECRET_KEY: ci-secret-key-not-for-production
+          DJANGO_DEBUG: '0'
+        run: python manage.py test
+        working-directory: backend
+
+  miniapp:
+    name: 小程序类型检查与测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/miniapp/pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: apps/miniapp
+      - name: 类型检查
+        run: pnpm type-check
+        working-directory: apps/miniapp
+      - name: 单元测试
+        run: pnpm test
+        working-directory: apps/miniapp
+      - name: 构建 H5
+        run: pnpm build:h5
+        working-directory: apps/miniapp
+
+  admin:
+    name: 管理端类型检查与测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/admin/pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: apps/admin
+      - name: 类型检查
+        run: pnpm type-check
+        working-directory: apps/admin
+      - name: 单元测试
+        run: pnpm test
+        working-directory: apps/admin
+      - name: 构建
+        run: pnpm build
+        working-directory: apps/admin
