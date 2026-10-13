@@ -17,7 +17,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import IsAdminUser, AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
-from .models import GamePartition, ProductCategory, Product, HomeEntry, AuditLog, Order, OrderStatusHistory, Partner, PartnerApplication, AfterSaleCase, Refund, SystemConfig, get_config_int, Settlement, SettlementItem
+from .models import GamePartition, ProductCategory, Product, HomeEntry, AuditLog, Order, OrderStatusHistory, Partner, PartnerApplication, AfterSaleCase, Refund, SystemConfig, get_config_int, Settlement, SettlementItem, UserProfile
 from .serializers import ProductSerializer, OrderSerializer, PartnerSerializer, PartnerApplicationSerializer, AfterSaleCaseSerializer, RefundSerializer, SettlementSerializer
 
 class LoginThrottle(AnonRateThrottle):
@@ -191,7 +191,7 @@ def overview(request):
 
 @endpoint(['GET'])
 def orders(request, pk=None):
-    qs=Order.objects.select_related('user').order_by('-id')
+    qs=Order.objects.select_related('user','product','partner','partner__user__profile').prefetch_related('review').order_by('-id')
     if pk:
         obj=qs.filter(pk=pk).first()
         if not obj:return Response(status=404)
@@ -369,7 +369,7 @@ def customers(request):
         qs = qs.filter(Q(username__icontains=q) | Q(profile__nickname__icontains=q))
     def fmt(u):
         try: nickname = u.profile.nickname
-        except Exception: nickname = ''
+        except UserProfile.DoesNotExist: nickname = ''
         return {'id': u.pk, 'username': u.username, 'nickname': nickname or u.username}
     return page(request, qs, fmt)
 

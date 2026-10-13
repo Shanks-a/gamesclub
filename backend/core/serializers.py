@@ -19,8 +19,12 @@ class ReviewSerializer(serializers.ModelSerializer):
 class OrderSerializer(serializers.ModelSerializer):
     review = serializers.SerializerMethodField()
     def get_review(self, obj):
-        r = getattr(obj, 'review', None)
-        if r is None:
+        # 优先取 prefetch_related 的缓存，避免列表场景逐条查询（N+1）。
+        # 注意：OneToOne 反向关系在对象上缓存的是单个实例或抛 DoesNotExist，
+        # 需用 try/except 兜底单条查询场景。
+        if hasattr(obj, '_prefetched_objects_cache') and 'review' in obj._prefetched_objects_cache:
+            r = obj._prefetched_objects_cache['review'][0] if obj._prefetched_objects_cache['review'] else None
+        else:
             try: r = obj.review
             except Review.DoesNotExist: r = None
         return ReviewSerializer(r).data if r else None

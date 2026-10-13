@@ -161,7 +161,9 @@ def favorite_detail(request, product_id):
 
 @api_view(['GET','POST'])
 def orders(request):
-    if request.method == 'GET': return Response(OrderSerializer(Order.objects.filter(user=request.user).order_by('-created_at'), many=True).data)
+    if request.method == 'GET':
+        qs = Order.objects.filter(user=request.user).select_related('product', 'partner', 'partner__user__profile').prefetch_related('review').order_by('-created_at')
+        return Response(OrderSerializer(qs, many=True).data)
     quantity = request.data.get('quantity'); expected = request.data.get('expected_product_version')
     if type(quantity) is not int: return err('数量必须为整数', 'INVALID_QUANTITY')
     if set(request.data) - {'product_id','quantity','expected_product_version','appointment_date','appointment_slot'}: return err('不接受自定义金额或其他字段', 'INVALID_FIELDS')
@@ -333,7 +335,7 @@ def _partner_of(request):
 def partner_orders(request):
     partner = _partner_of(request)
     if not partner: return err('你不是陪玩或尚未建立档案', 'NOT_PARTNER', 403)
-    qs = Order.objects.filter(partner=partner).order_by('-created_at')
+    qs = Order.objects.filter(partner=partner).select_related('product', 'user__profile').prefetch_related('review').order_by('-created_at')
     return Response(OrderSerializer(qs, many=True).data)
 
 def _partner_order_action(request, pk, action, from_status, to_status):

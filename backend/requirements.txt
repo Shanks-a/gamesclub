@@ -1,6 +1,6 @@
-Django==5.2.*
-djangorestframework==3.16.*
-psycopg[binary]==3.2.*
-drf-spectacular==0.28.*
-python-dotenv==1.1.*
-Pillow>=11.0,<13
+Django==5.2.17
+djangorestframework==3.16.1
+psycopg[binary]==3.2.13
+drf-spectacular==0.28.0
+python-dotenv==1.1.1
+Pillow==12.3.0
