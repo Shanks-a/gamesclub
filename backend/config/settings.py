@@ -45,7 +45,9 @@ MIDDLEWARE.append('core.errors.RequestLogMiddleware')
 
 # 生产安全基线（仅 DEBUG=False 时启用，避免干扰本地开发）
 if not DEBUG:
-    SECURE_SSL_REDIRECT = os.getenv('DJANGO_SECURE_SSL_REDIRECT', '1') == '1'
+    # SSL 跳转默认关闭（由 Nginx 等反代承担），部署 HTTPS 时设 DJANGO_SECURE_SSL_REDIRECT=1 开启；
+    # 若在应用层开启，务必同时配置 CSRF_TRUSTED_ORIGINS 为 https，否则测试与 CSRF 均会 301/403
+    SECURE_SSL_REDIRECT = os.getenv('DJANGO_SECURE_SSL_REDIRECT', '0') == '1'
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = int(os.getenv('DJANGO_SECURE_HSTS_SECONDS', '31536000'))
