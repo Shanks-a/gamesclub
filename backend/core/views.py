@@ -8,8 +8,8 @@ from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from .models import AccessToken, GamePartition, Product, ProductCategory, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile, WechatIdentity, Partner, PartnerApplication, Review, AfterSaleCase, Evidence, get_config_int
-from .serializers import GameSerializer, CategorySerializer, ProductSerializer, FavoriteSerializer, OrderSerializer, ProductWriteSerializer, PartnerSerializer, PartnerApplicationSerializer, ReviewSerializer, AfterSaleCaseSerializer, RefundSerializer
+from .models import AccessToken, GamePartition, Product, ProductCategory, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile, WechatIdentity, Partner, PartnerApplication, Review, AfterSaleCase, Evidence, get_config_int, Conversation, Message
+from .serializers import GameSerializer, CategorySerializer, ProductSerializer, FavoriteSerializer, OrderSerializer, ProductWriteSerializer, PartnerSerializer, PartnerApplicationSerializer, ReviewSerializer, AfterSaleCaseSerializer, RefundSerializer, ConversationSerializer, MessageSerializer
 from .wechat import code2session, WechatLoginError
 
 def err(message, code, http=400):
@@ -34,7 +34,16 @@ def save_idem(user, state, action, resource, response):
 @permission_classes([AllowAny])
 def dev_login(request):
     if not settings.DEBUG or not settings.ALLOW_DEV_LOGIN: return err('开发登录未开放', 'DEV_LOGIN_DISABLED', 403)
-    User = get_user_model(); user, _ = User.objects.get_or_create(username='dev-player'); UserProfile.objects.get_or_create(user=user)
+    User = get_user_model()
+    # 本地联调支持指定已存在的测试账号（仅 DEBUG 环境），默认仍为 dev-player
+    username = request.data.get('username') if isinstance(request.data, dict) else None
+    if username:
+        if not isinstance(username, str) or len(username) > 80: return err('用户名无效', 'INVALID_USERNAME', 400)
+        try: user = User.objects.get(username=username, is_staff=False, is_superuser=False)
+        except User.DoesNotExist: return err('测试账号不存在', 'NOT_FOUND', 404)
+    else:
+        user, _ = User.objects.get_or_create(username='dev-player')
+    UserProfile.objects.get_or_create(user=user)
     raw, _ = AccessToken.issue(user)
     return Response({'access_token': raw, 'user': {'id':user.id, 'nickname':user.profile.nickname, 'avatar_url':user.profile.avatar_url}})
 
@@ -148,6 +157,18 @@ def game_categories(request, pk):
     qs = ProductCategory.objects.filter(game_id=pk, game__is_enabled=True, is_enabled=True)
     return Response(CategorySerializer(qs, many=True).data)
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def game_partners(request, pk):
+    """某游戏分区内接单中的陪玩列表（公开，供下单时指定陪陪）。"""
+    active = Partner.objects.filter(game_id=pk, is_active=True, game__is_enabled=True).select_related('user__profile', 'game')
+    from django.db.models import Count, Q
+    active = active.annotate(completed_orders=Count('orders', filter=Q(orders__status=Order.Status.COMPLETED)))
+    data = [{'id': p.id, 'nickname': p.user.profile.nickname if hasattr(p.user, 'profile') else p.user.username,
+             'avatar_url': p.user.profile.avatar_url if hasattr(p.user, 'profile') else '',
+             'intro': p.intro, 'completed_orders': p.completed_orders, 'game': GameSerializer(p.game).data} for p in active]
+    return Response(data)
+
 @api_view(['GET','POST'])
 def favorites(request):
     if request.method == 'GET': return Response(FavoriteSerializer(Favorite.objects.filter(user=request.user).select_related('product__game'), many=True).data)
@@ -166,8 +187,19 @@ def orders(request):
         return Response(OrderSerializer(qs, many=True).data)
     quantity = request.data.get('quantity'); expected = request.data.get('expected_product_version')
     if type(quantity) is not int: return err('数量必须为整数', 'INVALID_QUANTITY')
-    if set(request.data) - {'product_id','quantity','expected_product_version','appointment_date','appointment_slot'}: return err('不接受自定义金额或其他字段', 'INVALID_FIELDS')
+    if set(request.data) - {'product_id','quantity','expected_product_version','appointment_date','appointment_slot','platform','role_name','role_id','message','remark','preferred_partner_id'}: return err('不接受自定义金额或其他字段', 'INVALID_FIELDS')
     if type(request.data.get('product_id')) is not int: return err('商品编号必须为整数', 'INVALID_PRODUCT')
+    # 游戏平台与角色信息（提交订单页填写；platform 可选，须为 mobile/pc）
+    platform = request.data.get('platform')
+    if platform is not None and platform not in Order.Platform.values: return err('游戏平台无效', 'INVALID_PLATFORM')
+    role_name = (request.data.get('role_name') or '').strip() if isinstance(request.data, dict) else ''
+    role_id = (request.data.get('role_id') or '').strip() if isinstance(request.data, dict) else ''
+    message = (request.data.get('message') or '').strip() if isinstance(request.data, dict) else ''
+    remark = (request.data.get('remark') or '').strip() if isinstance(request.data, dict) else ''
+    if len(role_name) > 80 or len(role_id) > 80: return err('角色名称/ID 不能超过80字', 'INVALID_ROLE')
+    if len(message) > 255 or len(remark) > 255: return err('留言/备注不能超过255字', 'INVALID_MESSAGE')
+    preferred_partner_id = request.data.get('preferred_partner_id')
+    if preferred_partner_id is not None and type(preferred_partner_id) is not int: return err('指定陪玩编号无效', 'INVALID_PARTNER')
     # 预约时段校验（可选，但日期与时段需成对出现）
     appt_date = request.data.get('appointment_date'); appt_slot = request.data.get('appointment_slot')
     if bool(appt_date) != bool(appt_slot): return err('预约日期与时段需同时提供', 'INVALID_APPOINTMENT')
@@ -188,7 +220,12 @@ def orders(request):
         if not p.is_published or not game.is_enabled or not category or not category.is_enabled or category.game_id != game.id: return err('商品已下架', 'PRODUCT_UNAVAILABLE', 409)
         if expected != p.version: return err('商品已更新，请重新确认价格', 'PRODUCT_VERSION_CONFLICT', 409)
         if quantity < p.min_quantity or quantity > p.max_quantity: return err('购买数量超出范围', 'INVALID_QUANTITY')
-        order = Order.objects.create(order_no='GC'+uuid.uuid4().hex[:30], user=request.user, product=p, game_name_snapshot=game.name, product_title_snapshot=p.title, cover_url_snapshot=p.cover_url, unit_price_cents=p.price_cents, total_amount_cents=p.price_cents*quantity, quantity=quantity, appointment_date=appt_date, appointment_slot=appt_slot, commission_bp=get_config_int('commission_bp', 2000))
+        # 校验客户指定的陪玩：须属于商品游戏分区且接单中
+        preferred = None
+        if preferred_partner_id is not None:
+            preferred = Partner.objects.filter(pk=preferred_partner_id, is_active=True, game_id=p.game_id).first()
+            if not preferred: return err('指定陪玩不存在、已暂停接单或与商品游戏不符', 'INVALID_PREFERRED_PARTNER', 409)
+        order = Order.objects.create(order_no='GC'+uuid.uuid4().hex[:30], user=request.user, product=p, game_name_snapshot=game.name, product_title_snapshot=p.title, cover_url_snapshot=p.cover_url, unit_price_cents=p.price_cents, total_amount_cents=p.price_cents*quantity, quantity=quantity, appointment_date=appt_date, appointment_slot=appt_slot, platform=platform, role_name=role_name, role_id=role_id, message=message, remark=remark, preferred_partner=preferred, commission_bp=get_config_int('commission_bp', 2000))
         OrderStatusHistory.objects.create(order=order, to_status=order.status, action='CREATE', actor=request.user)
         response = Response(OrderSerializer(order).data, status=201); save_idem(request.user, state, 'CREATE_ORDER', order.id, response); return response
 
@@ -222,8 +259,15 @@ def mock_pay(request, pk):
         except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
         if order.status != Order.Status.PENDING_PAYMENT or order.payment_status != Order.PaymentStatus.UNPAID: return err('当前状态不能付款', 'ORDER_STATE_CONFLICT', 409)
         PaymentAttempt.objects.create(order=order, idempotency_key=digest([request.user.pk,state[0]]), amount_cents=order.total_amount_cents, status=PaymentAttempt.Status.SUCCEEDED, completed_at=timezone.now())
-        old = order.status; order.payment_status=Order.PaymentStatus.PAID; order.status=Order.Status.PENDING_ARRANGEMENT; order.version += 1; order.save(update_fields=['payment_status','status','version','updated_at'])
-        OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action='MOCK_PAY', actor=request.user)
+        old = order.status
+        order.payment_status=Order.PaymentStatus.PAID
+        # 接单流程改为客服介入：无论是否指定陪玩，付款后均进入「待派单」，
+        # 由客服确认（陪玩是否有单/是否可接）后再人工派单。
+        # 指定的陪玩仅作为「意向陪玩」供客服派单时参考，不再自动派单。
+        order.status = Order.Status.PENDING_ARRANGEMENT
+        action = 'MOCK_PAY'
+        order.version += 1; order.save(update_fields=['payment_status','status','version','updated_at'])
+        OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action=action, actor=request.user)
         response=Response(OrderSerializer(order).data); save_idem(request.user,state,'MOCK_PAY',order.id,response); return response
 
 def admin_ok(request): return request.user.is_staff or request.user.is_superuser
@@ -354,6 +398,9 @@ def _partner_order_action(request, pk, action, from_status, to_status):
         if action == 'REJECT':
             order.partner = None; update_fields.append('partner')
         order.save(update_fields=update_fields)
+        # 陪玩接单成功后，为客户与陪玩建立订单会话（幂等，一单一会话）
+        if action == 'ACCEPT':
+            Conversation.objects.get_or_create(order=order, defaults={'user': order.user, 'partner': partner})
         OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action=action, actor=request.user)
         response = Response(OrderSerializer(order).data); save_idem(request.user, state, action, order.id, response); return response
 
@@ -426,3 +473,62 @@ def upload_evidence(request):
     path = default_storage.save('evidence/' + _uuid.uuid4().hex + '.jpg', ContentFile(output.getvalue()))
     ev = Evidence.objects.create(uploader=request.user, file_path=path, mime_type='image/jpeg', size_bytes=output.tell())
     return Response({'id': ev.id, 'url': default_storage.url(path)}, status=201)
+
+# ============ P0 消息与会话 ============
+
+def _conversations_qs(user):
+    """当前用户参与的会话，统一预取，避免 N+1。"""
+    return Conversation.objects.filter(Q(user=user) | Q(partner__user=user)).select_related(
+        'order', 'user__profile', 'partner__user__profile'
+    ).prefetch_related('messages').order_by('-id')
+
+def _accessible_conversation(user, pk):
+    """取当前用户可访问的会话；非参与者返回 None。"""
+    try:
+        return _conversations_qs(user).get(pk=pk)
+    except Conversation.DoesNotExist:
+        return None
+
+@api_view(['GET'])
+def conversations(request):
+    """会话列表：客户与陪玩通用，按最后消息时间倒序，带未读数。"""
+    partner = _partner_of(request)
+    qs = _conversations_qs(request.user)
+    data = []
+    for conv in qs:
+        messages = list(conv.messages.all())
+        # 当前用户在会话中的身份：是陪玩则我方 sender=PARTNER，否则为 USER
+        is_partner = partner is not None and conv.partner_id == partner.id
+        my_sender = Message.Sender.PARTNER if is_partner else Message.Sender.USER
+        unread = sum(1 for m in messages if m.sender != my_sender and m.read_at is None)
+        item = ConversationSerializer(conv).data
+        item['unread_count'] = unread
+        data.append(item)
+    return Response(data)
+
+@api_view(['GET'])
+def conversation_messages(request, pk):
+    conv = _accessible_conversation(request.user, pk)
+    if conv is None: return err('会话不存在', 'NOT_FOUND', 404)
+    # 拉取时把对方发来的消息标记为已读（当前用户视角）
+    partner = _partner_of(request)
+    my_sender = Message.Sender.PARTNER if partner and conv.partner_id == partner.id else Message.Sender.USER
+    Message.objects.filter(conversation=conv, read_at__isnull=True).exclude(sender=my_sender).update(read_at=timezone.now())
+    return Response(MessageSerializer(conv.messages.all(), many=True).data)
+
+@api_view(['POST'])
+def conversation_send(request, pk):
+    conv = _accessible_conversation(request.user, pk)
+    if conv is None: return err('会话不存在', 'NOT_FOUND', 404)
+    content = request.data.get('content') if isinstance(request.data, dict) else None
+    if not isinstance(content, str) or not content.strip(): return err('消息内容不能为空', 'INVALID_CONTENT')
+    if len(content) > 2000: return err('消息内容不能超过2000字', 'INVALID_CONTENT')
+    partner = _partner_of(request)
+    sender = Message.Sender.PARTNER if partner and conv.partner_id == partner.id else Message.Sender.USER
+    with transaction.atomic():
+        state, replay = get_idem(request.user, request, 'SEND_MESSAGE')
+        if replay is not None: return replay
+        msg = Message.objects.create(conversation=conv, sender=sender, content=content.strip())
+        response = Response(MessageSerializer(msg).data, status=201)
+        save_idem(request.user, state, 'SEND_MESSAGE', msg.id, response)
+        return response

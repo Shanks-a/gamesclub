@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 export type Game = string
 export const games: Game[] = reactive([] as string[])
-export interface Product { id: string; title: string; game: Game; price: number; original: number; art: number; tagline: string; version?: number; cover?:string; minQuantity?:number; maxQuantity?:number; available?:boolean }
+export interface Product { id: string; title: string; game: Game; price: number; original: number; art: number; tagline: string; version?: number; cover?:string; minQuantity?:number; maxQuantity?:number; available?:boolean; platforms?:string; gameId?:number }
 export const products: Product[] = reactive([] as Product[])
 export const offlineExampleProducts: Product[] = [
  { id:'duo', title:'双人默契上分', game:'王者荣耀', price:2900, original:3900, art:0, tagline:'默契配合，一起享受每一局' },

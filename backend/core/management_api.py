@@ -374,8 +374,12 @@ def customers(request):
     return page(request, qs, fmt)
 
 def _order_from_payload(data, partial=False):
-    """校验并规范化建单/编辑的字段，返回 (error_response, cleaned_dict)。"""
-    fields = {'user_id','product_id','quantity','appointment_date','appointment_slot','status','payment_status','partner_id'}
+    """校验并规范化建单/编辑的字段，返回 (error_response, cleaned_dict)。
+
+    注意：陪玩不在此处指定——陪玩统一通过「派单」动作（order_assign）走状态机指定，
+    避免建单时直接写 partner 字段绕过 PENDING_ARRANGEMENT -> PENDING_ACCEPTANCE 的派单流转。
+    """
+    fields = {'user_id','product_id','quantity','appointment_date','appointment_slot','status','payment_status'}
     unknown = set(data) - fields
     if unknown: return Response({'error':{'message':'不接受字段：'+','.join(sorted(unknown)),'code':'INVALID_FIELDS'}},status=400), None
     out = {}
@@ -394,9 +398,6 @@ def _order_from_payload(data, partial=False):
     if 'payment_status' in data:
         if data['payment_status'] not in Order.PaymentStatus.values: return Response({'error':{'message':'付款状态无效','code':'INVALID_PAYMENT_STATUS'}},status=400), None
         out['payment_status'] = data['payment_status']
-    if 'partner_id' in data:
-        if data['partner_id'] is not None and type(data['partner_id']) is not int: return Response({'error':{'message':'陪玩编号无效','code':'INVALID_PARTNER'}},status=400), None
-        out['partner_id'] = data['partner_id']
     appt_date = data.get('appointment_date'); appt_slot = data.get('appointment_slot')
     if 'appointment_date' in data or 'appointment_slot' in data:
         if bool(appt_date) != bool(appt_slot): return Response({'error':{'message':'预约日期与时段需同时提供','code':'INVALID_APPOINTMENT'}},status=400), None
@@ -432,12 +433,8 @@ def order_create(request):
             return Response({'error':{'message':'商品已下架','code':'PRODUCT_UNAVAILABLE'}},status=409)
         if quantity < p.min_quantity or quantity > p.max_quantity:
             return Response({'error':{'message':'购买数量超出范围','code':'INVALID_QUANTITY'}},status=400)
-        partner = None
-        if cleaned.get('partner_id'):
-            partner = Partner.objects.filter(pk=cleaned['partner_id']).first()
-            if not partner: return Response({'error':{'message':'陪玩不存在','code':'NOT_FOUND'}},status=404)
         order = Order.objects.create(
-            order_no='GC'+uuid.uuid4().hex[:30], user=customer, product=p, partner=partner,
+            order_no='GC'+uuid.uuid4().hex[:30], user=customer, product=p,
             game_name_snapshot=game.name, product_title_snapshot=p.title, cover_url_snapshot=p.cover_url,
             unit_price_cents=p.price_cents, total_amount_cents=p.price_cents*quantity, quantity=quantity,
             appointment_date=cleaned.get('appointment_date'), appointment_slot=cleaned.get('appointment_slot'),
@@ -479,13 +476,6 @@ def order_update(request, pk):
         order.total_amount_cents = order.unit_price_cents * quantity
         if 'status' in cleaned: order.status = cleaned['status']
         if 'payment_status' in cleaned: order.payment_status = cleaned['payment_status']
-        if 'partner_id' in cleaned:
-            if cleaned['partner_id'] is None:
-                order.partner = None
-            else:
-                partner = Partner.objects.filter(pk=cleaned['partner_id']).first()
-                if not partner: return Response({'error':{'message':'陪玩不存在','code':'NOT_FOUND'}},status=404)
-                order.partner = partner
         if 'appointment_date' in cleaned: order.appointment_date = cleaned['appointment_date']
         if 'appointment_slot' in cleaned: order.appointment_slot = cleaned['appointment_slot']
         order.version += 1; order.save()

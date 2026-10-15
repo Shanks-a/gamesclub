@@ -14,7 +14,6 @@ const services=[{icon:'wallet',title:'余额查看',sub:'演示 ¥ 128.00',kind:
   <view class="order-shortcuts card"><button class="ui-btn" v-for="(tab,i) in orderTabs" :key="tab" @click="requireLogin('orders',{tab})"><AppIcon :name="['wallet','order','game','headset','star'][i]" active :size="23"/><text>{{tab}}</text></button></view>
   <view class="section-head"><text class="heading">我的服务</text><button class="ui-btn link" @click="requireLogin('services')">全部服务 ›</button></view>
   <view class="service-grid card"><button v-for="item in services" :key="item.kind" class="ui-btn row" @click="requireLogin('detail',{kind:item.kind})"><AppIcon :name="item.icon" active/><view><view class="service-name">{{item.title}}</view><view class="tiny muted">{{demo.loggedIn?item.sub:'登录后查看'}}</view></view></button></view>
-  <button v-if="demo.me?.is_partner" class="ui-btn partner-entry row" @click="go('partner')"><AppIcon name="user" active/><view><view class="service-name">陪玩工作台</view><view class="tiny muted">{{demo.me.partner_active?'接单中 · 处理派单与服务':'已暂停接单'}}</view></view><text class="muted">›</text></button>
   <view class="footnote">热爱游戏，也热爱相遇</view>
  </view>
 </PageShell></template>

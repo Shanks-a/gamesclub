@@ -222,14 +222,21 @@ class OrderCrudTests(P4Base):
         game = self._game(); product = self._product(game)
         partner = self._make_partner(partner_user, game)
         admin = self._staff('admin2'); self.client.force_login(admin)
+        # 建单不再接受 partner_id，陪玩须经派单流转
         resp = self.client.post('/api/v1/management/orders/create/', {
             'user_id': customer.id, 'product_id': product.id, 'quantity': 1,
-            'status': 'ACCEPTED', 'payment_status': 'PAID', 'partner_id': partner.id,
+            'status': 'PENDING_ARRANGEMENT', 'payment_status': 'PAID',
         }, format='json')
         self.assertEqual(resp.status_code, 201, resp.data)
-        self.assertEqual(resp.data['status'], 'ACCEPTED')
+        self.assertEqual(resp.data['status'], 'PENDING_ARRANGEMENT')
         self.assertEqual(resp.data['payment_status'], 'PAID')
-        self.assertEqual(resp.data['partner'], partner.id)
+        self.assertIsNone(resp.data['partner'])
+        order_id = resp.data['id']
+        # 派单 -> 待陪玩确认
+        assign = self.client.post(f'/api/v1/management/orders/{order_id}/assign/', {'partner_id': partner.id}, format='json')
+        self.assertEqual(assign.status_code, 200, assign.data)
+        self.assertEqual(assign.data['partner'], partner.id)
+        self.assertEqual(assign.data['status'], 'PENDING_ACCEPTANCE')
 
     def test_update_order(self):
         customer = self._user('crud_customer3')

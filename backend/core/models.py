@@ -88,6 +88,8 @@ class Product(models.Model):
     min_quantity = models.PositiveIntegerField('最小数量', default=1)
     max_quantity = models.PositiveIntegerField('最大数量', default=5)
     is_published = models.BooleanField('已上架', default=True)
+    # 支持的游戏平台规格，逗号分隔：mobile=手机端，pc=电脑端。双端游戏（如无畏契约、三角洲行动）的商品可填 "pc,mobile"
+    platforms = models.CharField('支持平台', max_length=20, default='mobile')
     version = models.PositiveIntegerField('版本', default=1)
     updated_at = models.DateTimeField('更新时间', auto_now=True)
     class Meta:
@@ -133,6 +135,8 @@ class Order(models.Model):
         UNPAID='UNPAID'; PAID='PAID'
     class Slot(models.TextChoices):
         MORNING='morning'; AFTERNOON='afternoon'; EVENING='evening'
+    class Platform(models.TextChoices):
+        MOBILE='mobile'; PC='pc'
     order_no = models.CharField('订单号', max_length=32, unique=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='orders', verbose_name='用户')
     product = models.ForeignKey(Product, on_delete=models.PROTECT, verbose_name='商品')
@@ -148,6 +152,14 @@ class Order(models.Model):
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING_PAYMENT)
     payment_status = models.CharField(max_length=16, choices=PaymentStatus.choices, default=PaymentStatus.UNPAID)
     commission_bp = models.PositiveIntegerField('抽成基点', default=0)
+    # 下单需求信息（提交订单页填写）
+    platform = models.CharField('游戏平台', max_length=16, choices=Platform.choices, null=True, blank=True)
+    role_name = models.CharField('游戏角色名称', max_length=80, blank=True)
+    role_id = models.CharField('游戏角色ID', max_length=80, blank=True)
+    message = models.CharField('留言', max_length=255, blank=True)
+    remark = models.CharField('发单备注（仅接单陪玩可见）', max_length=255, blank=True)
+    # 客户指定的期望陪玩（意向）；付款后统一进入待派单，由客服确认后人工派单，此字段仅作参考
+    preferred_partner = models.ForeignKey(Partner, on_delete=models.PROTECT, null=True, blank=True, related_name='preferred_orders', verbose_name='客户指定陪玩')
     aftersale_deadline = models.DateTimeField('售后截止时间', null=True, blank=True)
     completed_at = models.DateTimeField('完成时间', null=True, blank=True)
     refunded_amount_cents = models.PositiveIntegerField('累计退款（分）', default=0)
@@ -240,6 +252,29 @@ class Evidence(models.Model):
     class Meta:
         verbose_name = '售后凭证'
         verbose_name_plural = '售后凭证'
+
+class Conversation(models.Model):
+    """客户与陪玩围绕订单的会话。陪玩接单后自动创建，一单一会话。"""
+    order = models.OneToOneField(Order, on_delete=models.PROTECT, related_name='conversation', verbose_name='订单')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='conversations', verbose_name='客户')
+    partner = models.ForeignKey(Partner, on_delete=models.PROTECT, related_name='conversations', verbose_name='陪玩')
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        verbose_name = '会话'
+        verbose_name_plural = '会话'
+
+class Message(models.Model):
+    class Sender(models.TextChoices):
+        USER='USER'; PARTNER='PARTNER'
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages', verbose_name='会话')
+    sender = models.CharField('发送方', max_length=16, choices=Sender.choices)
+    content = models.TextField('消息内容')
+    read_at = models.DateTimeField('已读时间', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        ordering = ['id']
+        verbose_name = '消息'
+        verbose_name_plural = '消息'
 
 class Settlement(models.Model):
     batch_no = models.CharField('批次号', max_length=32, unique=True)
