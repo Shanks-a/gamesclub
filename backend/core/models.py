@@ -170,6 +170,53 @@ class Order(models.Model):
         verbose_name = '订单'
         verbose_name_plural = '订单'
 
+class CommunityPost(models.Model):
+    game = models.ForeignKey(GamePartition, on_delete=models.PROTECT, related_name='community_posts')
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='community_posts')
+    content = models.TextField(max_length=1000)
+    is_hidden = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-id']
+        indexes = [models.Index(fields=['game', 'is_hidden', '-id'], name='community_game_feed')]
+        verbose_name = '频道动态'
+        verbose_name_plural = '频道动态'
+
+
+class CommunityImage(models.Model):
+    uploader = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    post = models.ForeignKey(CommunityPost, on_delete=models.PROTECT, null=True, blank=True, related_name='images')
+    image = models.ImageField(upload_to='community/')
+    position = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['position', 'id']
+
+
+class CommunityLike(models.Model):
+    post = models.ForeignKey(CommunityPost, on_delete=models.CASCADE, related_name='likes')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['post', 'user'], name='one_community_like_per_user')]
+
+
+class CommunityComment(models.Model):
+    post = models.ForeignKey(CommunityPost, on_delete=models.PROTECT, related_name='comments')
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    content = models.CharField(max_length=300)
+    is_hidden = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['id']
+        verbose_name = '频道评论'
+        verbose_name_plural = '频道评论'
+
+
 class OrderStatusHistory(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='status_history')
     from_status = models.CharField(max_length=32, blank=True); to_status = models.CharField(max_length=32)

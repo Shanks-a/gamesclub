@@ -1,5 +1,7 @@
 # GamesClub API
 
+> 2026-10-15：已新增频道公开图文、点赞、评论及游戏榜单，迁移至 `0013_community`；订单私信已持久化。现行功能见 [项目总览](../PROJECT_OVERVIEW.md)，频道接口见 [验证说明](../notices/频道社区与榜单验证.md)，生产差距见 [发布准备](../notices/正式发布准备与差距评估.md)。下述 P4 内容为历史接口说明，不代表已接真实支付、退款或打款。Django Admin 新增社区隐藏管理。
+
 第四阶段（P4）：已完成订单与派单服务、陪玩入驻审核、管理端订单增删改查。运行步骤与验收边界见根目录《第三阶段完成度与联调手册.md》与 [notices/P4-订单与派单服务设计.md](./notices/P4-订单与派单服务设计.md)。先配置 backend/.env 的 DATABASE_URL（PostgreSQL），显式启用本地 ALLOW_DEV_LOGIN/ALLOW_MOCK_PAYMENT；未配置数据库会报错，不再静默使用 SQLite。现有数据库更新只执行 migration，勿运行重置数据操作。独立 Web 在 apps/admin，Django Admin 目录和订单改为只读。
 
 开发运行：

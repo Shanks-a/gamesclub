@@ -3,6 +3,7 @@ from django.urls import reverse
 from django.utils.html import format_html
 from django.db.models import F
 from .models import GamePartition, ProductCategory, Product, Order, UserProfile
+from .models import CommunityPost, CommunityComment
 
 admin.site.site_header = '游伴 CLUB 管理后台'
 admin.site.site_title = '游伴 CLUB 管理后台'
@@ -60,3 +61,27 @@ class ReadOnlyMaintenance(admin.ModelAdmin):
 for model in (GamePartition, ProductCategory, Product, Order):
     admin.site.unregister(model)
     admin.site.register(model, ReadOnlyMaintenance)
+
+
+@admin.register(CommunityPost)
+class CommunityPostAdmin(admin.ModelAdmin):
+    list_display = ('id', 'game', 'author', 'created_at', 'is_hidden')
+    list_filter = ('game', 'is_hidden')
+    search_fields = ('content', 'author__profile__nickname')
+    readonly_fields = ('game', 'author', 'content', 'created_at')
+    fields = ('game', 'author', 'content', 'created_at', 'is_hidden')
+
+    def has_add_permission(self, request): return False
+    def has_delete_permission(self, request, obj=None): return False
+
+
+@admin.register(CommunityComment)
+class CommunityCommentAdmin(admin.ModelAdmin):
+    list_display = ('id', 'post', 'author', 'created_at', 'is_hidden')
+    list_filter = ('is_hidden',)
+    search_fields = ('content', 'author__profile__nickname')
+    readonly_fields = ('post', 'author', 'content', 'created_at')
+    fields = ('post', 'author', 'content', 'created_at', 'is_hidden')
+
+    def has_add_permission(self, request): return False
+    def has_delete_permission(self, request, obj=None): return False

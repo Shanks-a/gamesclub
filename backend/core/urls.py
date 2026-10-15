@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import community_api as community
 from . import management_api as management
 from django.urls import include
 management_urls = [
@@ -12,3 +13,12 @@ management_urls = [
 ]
 urlpatterns = [path('auth/dev-login/', views.dev_login), path('auth/wechat-login/', views.wechat_login), path('me/', views.me), path('me/avatar/', views.upload_avatar), path('me/partner-application/', views.partner_application), path('me/partner/orders/', views.partner_orders), path('me/partner/orders/<int:pk>/accept/', views.partner_accept), path('me/partner/orders/<int:pk>/reject/', views.partner_reject), path('me/partner/orders/<int:pk>/start/', views.partner_start), path('me/partner/orders/<int:pk>/complete/', views.partner_complete), path('me/orders/<int:pk>/confirm/', views.confirm_order), path('me/orders/<int:pk>/review/', views.review), path('me/orders/<int:pk>/aftersale/', views.aftersale), path('me/aftersale-evidence/', views.upload_evidence), path('me/conversations/', views.conversations), path('me/conversations/<int:pk>/messages/', views.conversation_messages), path('me/conversations/<int:pk>/send/', views.conversation_send), path('games/', views.games), path('games/<int:pk>/categories/', views.game_categories), path('games/<int:pk>/partners/', views.game_partners), path('products/', views.products), path('products/<int:pk>/', views.product_detail), path('me/favorites/', views.favorites), path('me/favorites/<int:product_id>/', views.favorite_detail), path('me/orders/', views.orders), path('me/orders/<int:pk>/', views.order_detail), path('me/orders/<int:pk>/cancel/', views.cancel_order), path('me/orders/<int:pk>/mock-pay/', views.mock_pay), path('management/products/', views.management_products), path('management/products/<int:pk>/', views.management_product_detail), path('management/categories/', views.management_categories), path('management/categories/<int:pk>/', views.management_category_detail), path('management/products/<int:pk>/publish/', views.publish_product), path('management/products/<int:pk>/unpublish/', views.unpublish_product)]
 urlpatterns = [path('auth/logout/',views.logout),path('home/',management.public_home),path('management/',include(management_urls))] + [p for p in urlpatterns if not str(p.pattern).startswith('management/')]
+urlpatterns += [
+    path('games/<int:game_id>/posts/', community.game_posts),
+    path('games/<int:game_id>/leaderboard/', community.leaderboard),
+    path('community/images/', community.upload_image),
+    path('community/posts/<int:pk>/', community.delete_post),
+    path('community/posts/<int:pk>/like/', community.post_like),
+    path('community/posts/<int:pk>/comments/', community.post_comments),
+    path('community/comments/<int:pk>/', community.delete_comment),
+]
