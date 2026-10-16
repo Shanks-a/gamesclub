@@ -161,6 +161,8 @@ class Order(models.Model):
     # 客户指定的期望陪玩（意向）；付款后统一进入待派单，由客服确认后人工派单，此字段仅作参考
     preferred_partner = models.ForeignKey(Partner, on_delete=models.PROTECT, null=True, blank=True, related_name='preferred_orders', verbose_name='客户指定陪玩')
     aftersale_deadline = models.DateTimeField('售后截止时间', null=True, blank=True)
+    started_at = models.DateTimeField('开始服务时间', null=True, blank=True)
+    completion_requested_at = models.DateTimeField('申请完成时间', null=True, blank=True)
     completed_at = models.DateTimeField('完成时间', null=True, blank=True)
     refunded_amount_cents = models.PositiveIntegerField('累计退款（分）', default=0)
     reserved_refund_cents = models.PositiveIntegerField('预留退款（分）', default=0)
@@ -311,17 +313,46 @@ class Conversation(models.Model):
         verbose_name_plural = '会话'
 
 class Message(models.Model):
+    class Kind(models.TextChoices):
+        TEXT='TEXT'; SERVICE_STARTED='SERVICE_STARTED'; COMPLETION_REQUEST='COMPLETION_REQUEST'; COMPLETION_CONFIRMED='COMPLETION_CONFIRMED'
     class Sender(models.TextChoices):
         USER='USER'; PARTNER='PARTNER'
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages', verbose_name='会话')
     sender = models.CharField('发送方', max_length=16, choices=Sender.choices)
     content = models.TextField('消息内容')
+    kind = models.CharField('消息类型', max_length=24, choices=Kind.choices, default=Kind.TEXT)
     read_at = models.DateTimeField('已读时间', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     class Meta:
         ordering = ['id']
         verbose_name = '消息'
         verbose_name_plural = '消息'
+
+class SupportConversation(models.Model):
+    """One private requester thread per order (or general enquiry), shared by staff."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    order = models.ForeignKey(Order, null=True, blank=True, on_delete=models.PROTECT)
+    context_key = models.CharField(max_length=32, default='general')
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'context_key'], name='unique_support_context')]
+
+
+class SupportMessage(models.Model):
+    conversation = models.ForeignKey(SupportConversation, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    from_staff = models.BooleanField(default=False)
+    content = models.CharField(max_length=2000)
+    client_key = models.UUIDField()
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['id']
+        constraints = [models.UniqueConstraint(fields=['conversation', 'sender', 'client_key'], name='unique_support_message_retry')]
+
 
 class Settlement(models.Model):
     batch_no = models.CharField('批次号', max_length=32, unique=True)

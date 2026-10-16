@@ -1,10 +1,13 @@
 from rest_framework.test import APITestCase
 from django.test import override_settings
+from django.core.management import call_command
+from io import StringIO
 from .models import GamePartition, Product, ProductCategory, Order
 @override_settings(DEBUG=True, ALLOW_DEV_LOGIN=True, ALLOW_MOCK_PAYMENT=True)
 class FlowTests(APITestCase):
     def setUp(self):
         game=GamePartition.objects.create(name='王者荣耀'); category=ProductCategory.objects.create(game=game,name='娱乐单'); self.product=Product.objects.create(game=game,category=category,title='测试服务',price_cents=2900,original_price_cents=3900)
+        call_command('setup_test_accounts', game_id=game.pk, stdout=StringIO())
     def login(self):
         response=self.client.post('/api/v1/auth/dev-login/',{},format='json'); self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access_token']}")
     def test_order_payment_and_snapshot(self):

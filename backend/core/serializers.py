@@ -17,6 +17,39 @@ class FavoriteSerializer(serializers.ModelSerializer):
 class ReviewSerializer(serializers.ModelSerializer):
     class Meta: model=Review; fields=['id','order','user','rating','content','created_at']
 class OrderSerializer(serializers.ModelSerializer):
+    aftersale = serializers.SerializerMethodField()
+    def get_aftersale(self, obj):
+        cases = list(obj.aftersale_cases.all())
+        if not cases:
+            return None
+        latest = max(cases, key=lambda case: case.id)
+        refunds = list(latest.refunds.all())
+        refund = max(refunds, key=lambda item: item.id) if refunds else None
+        return {'status': latest.status, 'reason': latest.reason, 'resolution': latest.resolution,
+                'refund_status': refund.status if refund else None,
+                'reapplication_blocked': any(case.status != AfterSaleCase.Status.REJECTED for case in cases)}
+    game_id = serializers.IntegerField(source='product.game_id', read_only=True)
+    partner_info = serializers.SerializerMethodField()
+    preferred_partner_info = serializers.SerializerMethodField()
+    conversation_id = serializers.SerializerMethodField()
+
+    def _partner_info(self, partner):
+        if partner is None:
+            return None
+        profile = getattr(partner.user, 'profile', None)
+        return {'id': partner.id, 'nickname': profile.nickname if profile else '陪玩',
+                'avatar_url': profile.avatar_url if profile else ''}
+
+    def get_partner_info(self, obj):
+        return self._partner_info(obj.partner)
+
+    def get_preferred_partner_info(self, obj):
+        return self._partner_info(obj.preferred_partner)
+
+    def get_conversation_id(self, obj):
+        conversation = getattr(obj, 'conversation', None)
+        return conversation.id if conversation else None
+
     review = serializers.SerializerMethodField()
     def get_review(self, obj):
         # 优先取 prefetch_related 的缓存，避免列表场景逐条查询（N+1）。
@@ -28,7 +61,7 @@ class OrderSerializer(serializers.ModelSerializer):
             try: r = obj.review
             except Review.DoesNotExist: r = None
         return ReviewSerializer(r).data if r else None
-    class Meta: model=Order; fields=['id','order_no','product','game_name_snapshot','product_title_snapshot','cover_url_snapshot','unit_price_cents','total_amount_cents','quantity','appointment_date','appointment_slot','partner','platform','role_name','role_id','message','remark','preferred_partner','status','payment_status','commission_bp','aftersale_deadline','completed_at','refunded_amount_cents','reserved_refund_cents','review','version','created_at','updated_at']
+    class Meta: model=Order; fields=['aftersale','game_id','partner_info','preferred_partner_info','conversation_id','id','order_no','product','game_name_snapshot','product_title_snapshot','cover_url_snapshot','unit_price_cents','total_amount_cents','quantity','appointment_date','appointment_slot','partner','platform','role_name','role_id','message','remark','preferred_partner','status','payment_status','commission_bp','aftersale_deadline','started_at','completion_requested_at','completed_at','refunded_amount_cents','reserved_refund_cents','review','version','created_at','updated_at']
 class PartnerSerializer(serializers.ModelSerializer):
     game = GameSerializer(read_only=True)
     nickname = serializers.CharField(source='user.profile.nickname', read_only=True)
@@ -70,7 +103,7 @@ class SettlementSerializer(serializers.ModelSerializer):
     class Meta: model=Settlement; fields=['id','batch_no','executed_by','items','created_at']
 
 class MessageSerializer(serializers.ModelSerializer):
-    class Meta: model=Message; fields=['id','conversation','sender','content','read_at','created_at']
+    class Meta: model=Message; fields=['id','conversation','sender','kind','content','read_at','created_at']
 
 class ConversationSerializer(serializers.ModelSerializer):
     """会话列表项：含对方昵称/头像、最后一条消息与未读数（未读数由视图按当前用户计算）。"""
@@ -83,7 +116,8 @@ class ConversationSerializer(serializers.ModelSerializer):
     order_no = serializers.CharField(source='order.order_no', read_only=True)
     product_title = serializers.CharField(source='order.product_title_snapshot', read_only=True)
     def get_last_message(self, obj):
-        lm = obj.messages.last() if hasattr(obj, '_prefetched_messages') else obj.messages.order_by('-id').first()
+        messages = list(obj.messages.all())
+        lm = messages[-1] if messages else None
         return MessageSerializer(lm).data if lm else None
     class Meta:
         model = Conversation

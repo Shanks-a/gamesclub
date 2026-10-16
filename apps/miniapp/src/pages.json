@@ -11,6 +11,7 @@
   {"path":"pages/services/index","style":{"navigationBarTitleText":"服务中心"}},
   {"path":"pages/login/index","style":{"navigationBarTitleText":"登录"}},
   {"path":"pages/detail/index","style":{"navigationBarTitleText":"详情"}},
+  {"path":"pages/support-chat/index","style":{"navigationBarTitleText":"在线客服"}},
   {"path":"pages/chat/index","style":{"navigationBarTitleText":"会话"}},
   {"path":"pages/checkout/index","style":{"navigationBarTitleText":"提交订单"}}
  ],

@@ -17,6 +17,7 @@ const partnerMode=ref<'auto'|'specified'>('auto')
 const pickedPartner=ref<{id:number;name:string}|null>(null)
 const busy=ref(false)
 const total=computed(()=>(product.value?.price||0)*quantity.value)
+const supportedPlatforms=computed(()=>[...new Set((product.value?.platforms||'mobile').split(',').map(v=>v.trim()).filter((v):v is 'mobile'|'pc'=>v==='mobile'||v==='pc'))])
 const platformLabel=computed(()=>platform.value==='pc'?'电脑端':'手机端')
 // 选择陪陪弹窗
 const pickerOpen=ref(false)
@@ -24,7 +25,7 @@ onLoad(async q=>{
   productId.value=q?.productId||''
   platform.value=(q?.platform as 'mobile'|'pc')||'mobile'
   quantity.value=Math.max(1,Number(q?.quantity||1))
-  try{product.value=await getProduct(productId.value)}catch(e){loadError.value=(e as Error).message;return}
+  try{product.value=await getProduct(productId.value);if(!supportedPlatforms.value.includes(platform.value))platform.value=supportedPlatforms.value[0]||'mobile'}catch(e){loadError.value=(e as Error).message;return}
 })
 function openPicker(){
   if(!product.value?.gameId)return
@@ -38,6 +39,7 @@ function pick(p:ApiGamePartner){
 async function submit(){
   if(!demo.loggedIn){go('login');return}
   if(!product.value)return
+  if(!supportedPlatforms.value.includes(platform.value)){notify('商品平台配置不可用，请联系客服');return}
   if(!role.value.trim()){notify('请填写游戏角色名称');return}
   if(!roleId.value.trim()){notify('请填写游戏角色ID');return}
   if(partnerMode.value==='specified'&&!pickedPartner.value){notify('请选择指定陪陪');return}
@@ -78,26 +80,23 @@ async function submit(){
       <view class="between ck-partner-heading">
         <text class="ck-partner-label">接单陪陪</text>
         <view class="row ck-partner-options">
-          <button class="ui-btn ck-chip" :class="{active:partnerMode==='auto'}" @click="partnerMode='auto'">自动安排</button>
+          <button class="ui-btn ck-chip" :class="{active:partnerMode==='auto'}" @click="partnerMode='auto'">客服安排</button>
           <button class="ui-btn ck-chip" :class="{active:partnerMode==='specified'}" @click="openPicker">指定陪陪</button>
         </view>
       </view>
-      <button class="ui-btn ck-picker-entry" @click="openPicker">
-        <view class="grow"><view class="ck-picker-title">{{partnerMode==='specified'&&pickedPartner?pickedPartner.name:'选择陪陪'}}</view><view class="ck-picker-hint">{{partnerMode==='specified'?'点击可重新选择':'可按名称或 ID 指定，未选择则自动安排'}}</view></view>
-        <text class="ck-picker-arrow">›</text>
-      </button>
+      <view v-if="partnerMode==='specified'&&pickedPartner" class="ck-picker-hint">已指定：{{pickedPartner.name}} · 点击上方可更换</view>
     </view>
     <view class="card ck-form">
       <view class="ck-field"><text class="ck-label">留言</text><input v-model="message" class="ck-input" placeholder="请先与商家沟通一致再留言哦～" maxlength="255"/></view>
     </view>
     <view class="card ck-form">
       <view class="ck-field"><text class="ck-label ck-req">游戏平台</text>
-        <view class="row gap"><button class="ui-btn ck-chip" :class="{active:platform==='mobile'}" @click="platform='mobile'">手游</button><button class="ui-btn ck-chip" :class="{active:platform==='pc'}" @click="platform='pc'">端游</button></view>
+        <text v-if="supportedPlatforms.length===1" class="tiny muted">{{platformLabel}}</text><view v-else class="row gap"><button v-for="option in supportedPlatforms" :key="option" class="ui-btn ck-chip" :class="{active:platform===option}" @click="platform=option">{{option==='mobile'?'手机端':'电脑端'}}</button></view>
       </view>
       <view class="ck-field"><text class="ck-label ck-req">游戏角色名称</text><input v-model="role" class="ck-input" placeholder="输入你的游戏角色名字" maxlength="80"/></view>
       <view class="ck-field"><text class="ck-label ck-req">游戏角色ID</text><input v-model="roleId" class="ck-input" placeholder="输入你的游戏角色ID" maxlength="80"/></view>
       <view class="ck-field"><text class="ck-label">发单备注</text><input v-model="remark" class="ck-input" placeholder="仅限接单陪陪看得到（选填）" maxlength="255"/></view>
-      <view class="tiny muted ck-note">注意事项：指定陪陪5分钟没接自动安排</view>
+      <view class="tiny muted ck-note">注意事项：付款后由客服确认陪玩是否可接单；如需更换人选，将与您协商</view>
     </view>
     <view class="card between"><text class="ck-label">商品总价</text><text class="ck-total">¥{{money(total)}}</text></view>
     <view class="ck-footer safe-bottom between">

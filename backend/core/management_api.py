@@ -19,6 +19,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from .models import GamePartition, ProductCategory, Product, HomeEntry, AuditLog, Order, OrderStatusHistory, Partner, PartnerApplication, AfterSaleCase, Refund, SystemConfig, get_config_int, Settlement, SettlementItem, UserProfile
 from .serializers import ProductSerializer, OrderSerializer, PartnerSerializer, PartnerApplicationSerializer, AfterSaleCaseSerializer, RefundSerializer, SettlementSerializer
+from .test_accounts import roster
 
 class LoginThrottle(AnonRateThrottle):
     rate = '10/min'
@@ -34,7 +35,7 @@ def endpoint(methods, public=False):
 @ensure_csrf_cookie
 def session_info(request):
     token = get_token(request)
-    return Response({'csrf_token':token, 'authenticated':bool(request.user.is_authenticated and request.user.is_staff), 'username':request.user.get_username()})
+    return Response({'csrf_token':token, 'authenticated':bool(request.user.is_authenticated and request.user.is_staff), 'username':request.user.get_username(), 'test_accounts':roster(staff=True)})
 
 @endpoint(['POST'], public=True)
 @throttle_classes([LoginThrottle])
@@ -191,7 +192,7 @@ def overview(request):
 
 @endpoint(['GET'])
 def orders(request, pk=None):
-    qs=Order.objects.select_related('user','product','partner','partner__user__profile').prefetch_related('review').order_by('-id')
+    qs=Order.objects.select_related('user','product','partner','partner__user__profile','preferred_partner__user__profile','conversation').prefetch_related('review', 'aftersale_cases__refunds').order_by('-id')
     if pk:
         obj=qs.filter(pk=pk).first()
         if not obj:return Response(status=404)
@@ -330,31 +331,59 @@ def partner_delete(request, pk):
         AuditLog.objects.create(actor=request.user, action='delete', resource='partner', resource_id=str(pk), before=before)
     return Response({'ok':True})
 
+def _staff_order_action(request, pk, action):
+    from .staff_orders import change_order, WorkflowError
+    try:
+        with transaction.atomic():
+            order = change_order(request.user, pk, request.data, action)
+            return Response(OrderSerializer(order).data)
+    except WorkflowError as exc:
+        return Response(exc.detail, status=exc.status_code)
+
+
 @endpoint(['POST'])
 def order_assign(request, pk):
-    """派单：PENDING_ARRANGEMENT -> PENDING_ACCEPTANCE，指定陪玩，含时段冲突检查。"""
-    partner_id = request.data.get('partner_id') if isinstance(request.data, dict) else None
-    if type(partner_id) is not int: return Response({'error':{'message':'请指定陪玩','code':'INVALID_PARTNER'}},status=400)
+    return _staff_order_action(request, pk, 'assign')
+
+
+@endpoint(['POST'])
+def order_start(request, pk):
+    return _staff_order_action(request, pk, 'start')
+
+
+@endpoint(['POST'])
+def order_complete(request, pk):
+    return _staff_order_action(request, pk, 'complete')
+
+
+@endpoint(['GET'], public=True)
+def public_support(request):
+    from .support import get_support_config
+    return Response(get_support_config())
+
+
+@endpoint(['GET', 'PATCH'])
+def support_settings(request):
+    from .support import get_support_config, SupportConfigSerializer
+    if request.method == 'GET':
+        return Response(get_support_config())
+    if not request.user.is_superuser:
+        return Response({'error': {'message': '仅超级管理员可修改客服配置', 'code': 'FORBIDDEN'}}, status=403)
+    serializer = SupportConfigSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response({'error': {'message': '客服配置无效，请检查渠道、企业ID及客服链接',
+                                   'code': 'INVALID_SUPPORT_CONFIG', 'details': serializer.errors}}, status=400)
     with transaction.atomic():
-        order = Order.objects.select_for_update().filter(pk=pk).first()
-        if not order: return Response(status=404)
-        if order.status != Order.Status.PENDING_ARRANGEMENT:
-            return Response({'error':{'message':'订单当前状态不能派单','code':'ORDER_STATE_CONFLICT'}},status=409)
-        partner = Partner.objects.select_for_update().filter(pk=partner_id).first()
-        if not partner: return Response({'error':{'message':'陪玩不存在','code':'NOT_FOUND'}},status=404)
-        if not partner.is_active: return Response({'error':{'message':'该陪玩已关闭接单','code':'PARTNER_DISABLED'}},status=409)
-        # 冲突检查：同一陪玩同一天同时段已有未完成订单
-        if order.appointment_date and order.appointment_slot:
-            conflict = Order.objects.filter(
-                partner=partner, appointment_date=order.appointment_date, appointment_slot=order.appointment_slot
-            ).exclude(status__in=[Order.Status.CANCELLED, Order.Status.COMPLETED]).exclude(pk=order.pk).exists()
-            if conflict:
-                return Response({'error':{'message':'该陪玩在该时段已有未完成订单，请换人','code':'PARTNER_CONFLICT'}},status=409)
-        old = order.status; order.partner = partner; order.status = Order.Status.PENDING_ACCEPTANCE; order.version += 1
-        order.save(update_fields=['partner','status','version','updated_at'])
-        OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action='ASSIGN', actor=request.user)
-        AuditLog.objects.create(actor=request.user, action='assign_order', resource='order', resource_id=str(pk), after={'partner_id':partner_id})
-        return Response(OrderSerializer(order).data)
+        # Serialize configuration edits with other edits by the same administrator.
+        from django.contrib.auth import get_user_model
+        get_user_model().objects.select_for_update().get(pk=request.user.pk)
+        before = get_support_config()
+        SystemConfig.objects.update_or_create(key='customer_support', defaults={
+            'value_json': dict(serializer.validated_data), 'updated_by': request.user})
+        AuditLog.objects.create(actor=request.user, action='update_support', resource='settings',
+                                resource_id='customer_support', before=before, after=dict(serializer.validated_data))
+    return Response(serializer.validated_data)
+
 
 # ============ P4 订单管理端 CRUD ============
 
@@ -377,7 +406,7 @@ def _order_from_payload(data, partial=False):
     """校验并规范化建单/编辑的字段，返回 (error_response, cleaned_dict)。
 
     注意：陪玩不在此处指定——陪玩统一通过「派单」动作（order_assign）走状态机指定，
-    避免建单时直接写 partner 字段绕过 PENDING_ARRANGEMENT -> PENDING_ACCEPTANCE 的派单流转。
+    避免建单时直接写 partner 字段绕过客服确认接单的流转。
     """
     fields = {'user_id','product_id','quantity','appointment_date','appointment_slot','status','payment_status'}
     unknown = set(data) - fields
@@ -413,12 +442,16 @@ def _order_from_payload(data, partial=False):
 
 @endpoint(['POST'])
 def order_create(request):
-    """管理员手动建单：选客户 + 商品 + 数量 + 预约时段（可选状态/付款/陪玩）。"""
+    """手动建单仅允许待付款或已付款待派单，履约必须走专用动作。"""
     data = request.data if isinstance(request.data, dict) else {}
     err_resp, cleaned = _order_from_payload(data)
     if err_resp: return err_resp
     if 'user_id' not in cleaned: return Response({'error':{'message':'请选择客户','code':'INVALID_USER'}},status=400)
     if 'product_id' not in cleaned: return Response({'error':{'message':'请选择商品','code':'INVALID_PRODUCT'}},status=400)
+    initial_state = (cleaned.get('status', Order.Status.PENDING_PAYMENT), cleaned.get('payment_status', Order.PaymentStatus.UNPAID))
+    if initial_state not in [(Order.Status.PENDING_PAYMENT, Order.PaymentStatus.UNPAID),
+                             (Order.Status.PENDING_ARRANGEMENT, Order.PaymentStatus.PAID)]:
+        return Response({'error': {'message': '新订单只能为待付款或已付款待派单，履约请使用专用操作', 'code': 'ORDER_STATE_CONFLICT'}}, status=409)
     quantity = cleaned.get('quantity', 1)
     from django.contrib.auth import get_user_model
     User = get_user_model()
@@ -446,7 +479,7 @@ def order_create(request):
 
 @endpoint(['PATCH'])
 def order_update(request, pk):
-    """管理员编辑订单：改客户/商品/数量/状态/付款/陪玩/时段。"""
+    """仅编辑未付款订单资料，不允许直接改变付款或履约状态。"""
     data = request.data if isinstance(request.data, dict) else {}
     err_resp, cleaned = _order_from_payload(data)
     if err_resp: return err_resp
@@ -456,6 +489,10 @@ def order_update(request, pk):
     with transaction.atomic():
         try: order = Order.objects.select_for_update().get(pk=pk)
         except Order.DoesNotExist: return Response(status=404)
+        if order.status != Order.Status.PENDING_PAYMENT or order.payment_status != Order.PaymentStatus.UNPAID:
+            return Response({'error': {'message': '已付款订单不可直接编辑，请使用确认接单、开始服务、提交完成或售后操作', 'code': 'ORDER_EDIT_LOCKED'}}, status=409)
+        if cleaned.get('status', order.status) != order.status or cleaned.get('payment_status', order.payment_status) != order.payment_status:
+            return Response({'error': {'message': '请使用订单专用操作变更状态', 'code': 'ORDER_STATE_CONFLICT'}}, status=409)
         if 'user_id' in cleaned:
             try: customer = User.objects.get(pk=cleaned['user_id'], is_staff=False, is_superuser=False)
             except User.DoesNotExist: return Response({'error':{'message':'客户不存在','code':'NOT_FOUND'}},status=404)
@@ -488,6 +525,8 @@ def order_delete(request, pk):
     with transaction.atomic():
         try: order = Order.objects.select_for_update().get(pk=pk)
         except Order.DoesNotExist: return Response(status=404)
+        if order.payment_status != Order.PaymentStatus.UNPAID or order.status != Order.Status.PENDING_PAYMENT:
+            return Response({'error': {'message': '只允许删除未付款订单，已付款订单须保留履约记录', 'code': 'ORDER_DELETE_LOCKED'}}, status=409)
         order.payments.all().delete()
         OrderStatusHistory.objects.filter(order=order).delete()
         before = dict(OrderSerializer(order).data)
@@ -662,7 +701,7 @@ def settlements(request, pk=None):
             from django.utils import timezone as tz
             if tz.now() <= order.aftersale_deadline:
                 errors.append({'order_id': oid, 'code': 'SETTLEMENT_NOT_READY'}); continue
-            if AfterSaleCase.objects.filter(order=order, status=AfterSaleCase.Status.OPEN).exists():
+            if AfterSaleCase.objects.filter(order=order, status__in=[AfterSaleCase.Status.OPEN, AfterSaleCase.Status.APPROVED]).exists():
                 errors.append({'order_id': oid, 'code': 'SETTLEMENT_NOT_READY'}); continue
             if Refund.objects.filter(order=order, status__in=(Refund.Status.PENDING, Refund.Status.UNKNOWN)).exists():
                 errors.append({'order_id': oid, 'code': 'SETTLEMENT_NOT_READY'}); continue

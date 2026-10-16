@@ -112,32 +112,27 @@ class PartnerWorkflowTests(P4Base):
         # 管理端派单
         admin = self._user('admin'); admin.is_staff = True; admin.save()
         self.client.force_login(admin)
-        resp = self.client.post(f'/api/v1/management/orders/{order.id}/assign/', {'partner_id': partner.id}, format='json')
+        resp = self.client.post(f'/api/v1/management/orders/{order.id}/assign/', {'partner_id': partner.id, 'version': 1}, format='json')
         self.assertEqual(resp.status_code, 200, resp.data)
         order.refresh_from_db()
-        self.assertEqual(order.status, 'PENDING_ACCEPTANCE')
+        self.assertEqual(order.status, 'ACCEPTED')
         self.assertEqual(order.partner_id, partner.id)
 
-        # 陪玩接受
+        # 客服确认接单后，由实际陪玩开始并申请完成。
         self._auth(partner_user)
-        resp = self._post(f'/api/v1/me/partner/orders/{order.id}/accept/')
+        resp = self._post(f'/api/v1/me/partner/orders/{order.id}/start/', {'version': 2})
         self.assertEqual(resp.status_code, 200, resp.data)
-        order.refresh_from_db(); self.assertEqual(order.status, 'ACCEPTED')
-
-        # 开始服务
-        resp = self._post(f'/api/v1/me/partner/orders/{order.id}/start/')
-        self.assertEqual(resp.status_code, 200); order.refresh_from_db(); self.assertEqual(order.status, 'IN_SERVICE')
-
-        # 完成服务
-        resp = self._post(f'/api/v1/me/partner/orders/{order.id}/complete/')
-        self.assertEqual(resp.status_code, 200); order.refresh_from_db(); self.assertEqual(order.status, 'PENDING_CONFIRMATION')
+        order.refresh_from_db(); self.assertEqual(order.status, 'IN_SERVICE')
+        resp = self._post(f'/api/v1/me/partner/orders/{order.id}/complete/', {'version': 3})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        order.refresh_from_db(); self.assertEqual(order.status, 'PENDING_CONFIRMATION')
 
         # 客户验收
         self._auth(customer)
         resp = self._post(f'/api/v1/me/orders/{order.id}/confirm/')
         self.assertEqual(resp.status_code, 200, resp.data); order.refresh_from_db(); self.assertEqual(order.status, 'COMPLETED')
 
-    def test_partner_reject_returns_to_arrangement(self):
+    def test_retired_partner_reject_cannot_change_staff_assignment(self):
         customer = self._user('customer2')
         partner_user = self._user('partner2')
         game = self._game(); product = self._product(game)
@@ -146,14 +141,14 @@ class PartnerWorkflowTests(P4Base):
 
         admin = self._user('admin2'); admin.is_staff = True; admin.save()
         self.client.force_login(admin)
-        self.client.post(f'/api/v1/management/orders/{order.id}/assign/', {'partner_id': partner.id}, format='json')
+        self.client.post(f'/api/v1/management/orders/{order.id}/assign/', {'partner_id': partner.id, 'version': 1}, format='json')
 
         self._auth(partner_user)
         resp = self._post(f'/api/v1/me/partner/orders/{order.id}/reject/')
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 403)
         order.refresh_from_db()
-        self.assertEqual(order.status, 'PENDING_ARRANGEMENT')
-        self.assertIsNone(order.partner)
+        self.assertEqual(order.status, 'ACCEPTED')
+        self.assertEqual(order.partner_id, partner.id)
 
     def test_conflict_check_blocks_double_booking(self):
         customer = self._user('customer3')
@@ -166,10 +161,10 @@ class PartnerWorkflowTests(P4Base):
         admin = self._user('admin3'); admin.is_staff = True; admin.save()
         self.client.force_login(admin)
         # 第一单派给 partner 成功
-        r1 = self.client.post(f'/api/v1/management/orders/{order1.id}/assign/', {'partner_id': partner.id}, format='json')
+        r1 = self.client.post(f'/api/v1/management/orders/{order1.id}/assign/', {'partner_id': partner.id, 'version': 1}, format='json')
         self.assertEqual(r1.status_code, 200)
         # 第二单同时段 → 冲突
-        r2 = self.client.post(f'/api/v1/management/orders/{order2.id}/assign/', {'partner_id': partner.id}, format='json')
+        r2 = self.client.post(f'/api/v1/management/orders/{order2.id}/assign/', {'partner_id': partner.id, 'version': 1}, format='json')
         self.assertEqual(r2.status_code, 409)
         self.assertEqual(r2.data['error']['code'], 'PARTNER_CONFLICT')
 
@@ -182,7 +177,7 @@ class PartnerWorkflowTests(P4Base):
 
         admin = self._user('admin4'); admin.is_staff = True; admin.save()
         self.client.force_login(admin)
-        resp = self.client.post(f'/api/v1/management/orders/{order.id}/assign/', {'partner_id': partner.id}, format='json')
+        resp = self.client.post(f'/api/v1/management/orders/{order.id}/assign/', {'partner_id': partner.id, 'version': 1}, format='json')
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.data['error']['code'], 'PARTNER_DISABLED')
 
@@ -232,23 +227,26 @@ class OrderCrudTests(P4Base):
         self.assertEqual(resp.data['payment_status'], 'PAID')
         self.assertIsNone(resp.data['partner'])
         order_id = resp.data['id']
-        # 派单 -> 待陪玩确认
-        assign = self.client.post(f'/api/v1/management/orders/{order_id}/assign/', {'partner_id': partner.id}, format='json')
+        # 客服确认 -> 已接单
+        assign = self.client.post(f'/api/v1/management/orders/{order_id}/assign/', {'partner_id': partner.id, 'version': 1}, format='json')
         self.assertEqual(assign.status_code, 200, assign.data)
         self.assertEqual(assign.data['partner'], partner.id)
-        self.assertEqual(assign.data['status'], 'PENDING_ACCEPTANCE')
+        self.assertEqual(assign.data['status'], 'ACCEPTED')
 
     def test_update_order(self):
         customer = self._user('crud_customer3')
         game = self._game(); product = self._product(game)
         admin = self._staff('admin3'); self.client.force_login(admin)
         order = self._paid_order(customer, product, date='2026-10-10', slot='evening')
+        order.status = Order.Status.PENDING_PAYMENT
+        order.payment_status = Order.PaymentStatus.UNPAID
+        order.save()
         resp = self.client.patch(f'/api/v1/management/orders/{order.id}/edit/', {
-            'status': 'COMPLETED', 'quantity': 3,
+            'quantity': 3,
         }, format='json')
         self.assertEqual(resp.status_code, 200, resp.data)
         order.refresh_from_db()
-        self.assertEqual(order.status, 'COMPLETED')
+        self.assertEqual(order.status, 'PENDING_PAYMENT')
         self.assertEqual(order.quantity, 3)
         self.assertEqual(order.total_amount_cents, product.price_cents * 3)
 
@@ -257,6 +255,9 @@ class OrderCrudTests(P4Base):
         game = self._game(); product = self._product(game)
         admin = self._staff('admin4'); self.client.force_login(admin)
         order = self._paid_order(customer, product, date='2026-10-10', slot='morning')
+        order.status = Order.Status.PENDING_PAYMENT
+        order.payment_status = Order.PaymentStatus.UNPAID
+        order.save()
         from core.models import OrderStatusHistory
         OrderStatusHistory.objects.create(order=order, to_status=order.status, action='X', actor=customer)
         resp = self.client.delete(f'/api/v1/management/orders/{order.id}/delete/')

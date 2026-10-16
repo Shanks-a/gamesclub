@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 let csrfToken=''
 export function setCsrfToken(value:string){csrfToken=value}
-export const useSession=defineStore('session',{state:()=>({username:'',authenticated:false,csrf:''}),actions:{async restore(){const data=await api('session/');this.username=data.username;this.authenticated=data.authenticated;this.csrf=data.csrf_token;setCsrfToken(data.csrf_token)}}})
+export const useSession=defineStore('session',{state:()=>({username:'',authenticated:false,csrf:'',testAccounts:[] as {username:string;label:string}[]}),actions:{async restore(){const data=await api('session/');this.username=data.username;this.authenticated=data.authenticated;this.csrf=data.csrf_token;this.testAccounts=data.test_accounts||[];setCsrfToken(data.csrf_token)}}})
 export async function api(path:string,method='GET',body?:unknown):Promise<any>{
  const csrf=csrfToken||decodeURIComponent(document.cookie.split('; ').find(v=>v.startsWith('csrftoken='))?.split('=')[1]||'')
  const upload=body instanceof FormData

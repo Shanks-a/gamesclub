@@ -13,6 +13,6 @@ export function requireLogin(page:string,params:Record<string,string>={}) {
  go('login',{next:encodeURIComponent(JSON.stringify({page,params}))})
 }
 export function notify(title:string) { uni.showToast({title,icon:'none'}) }
-export function confirmDemo(title:string, content:string): Promise<boolean> {
- return new Promise(resolve=>uni.showModal({title,content,confirmText:'确认演示',confirmColor:'#80699E',success:r=>resolve(r.confirm),fail:()=>resolve(false)}))
+export function confirmDemo(title:string, content:string, confirmText='确认演示'): Promise<boolean> {
+ return new Promise(resolve=>uni.showModal({title,content,confirmText,confirmColor:'#80699E',success:r=>resolve(r.confirm),fail:()=>resolve(false)}))
 }

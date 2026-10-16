@@ -13,6 +13,7 @@ project.private.config.json
 test-results/
 backend/media/
 backend/.venv/
+backend/.local-test-accounts.txt
 
 # 项目工作数据（本地记忆/日志），不进入版本库
 .workbuddy/

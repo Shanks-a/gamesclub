@@ -5,12 +5,13 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from .models import AccessToken, GamePartition, Product, ProductCategory, Favorite, Order, OrderStatusHistory, PaymentAttempt, IdempotencyRecord, UserProfile, WechatIdentity, Partner, PartnerApplication, Review, AfterSaleCase, Evidence, get_config_int, Conversation, Message
 from .serializers import GameSerializer, CategorySerializer, ProductSerializer, FavoriteSerializer, OrderSerializer, ProductWriteSerializer, PartnerSerializer, PartnerApplicationSerializer, ReviewSerializer, AfterSaleCaseSerializer, RefundSerializer, ConversationSerializer, MessageSerializer
 from .wechat import code2session, WechatLoginError
+from .test_accounts import available_accounts, enabled as dev_accounts_enabled, roster
 
 def err(message, code, http=400):
     return Response({'error': {'code': code, 'message': message}}, status=http)
@@ -32,20 +33,22 @@ def save_idem(user, state, action, resource, response):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@authentication_classes([])
 def dev_login(request):
-    if not settings.DEBUG or not settings.ALLOW_DEV_LOGIN: return err('开发登录未开放', 'DEV_LOGIN_DISABLED', 403)
-    User = get_user_model()
-    # 本地联调支持指定已存在的测试账号（仅 DEBUG 环境），默认仍为 dev-player
-    username = request.data.get('username') if isinstance(request.data, dict) else None
-    if username:
-        if not isinstance(username, str) or len(username) > 80: return err('用户名无效', 'INVALID_USERNAME', 400)
-        try: user = User.objects.get(username=username, is_staff=False, is_superuser=False)
-        except User.DoesNotExist: return err('测试账号不存在', 'NOT_FOUND', 404)
-    else:
-        user, _ = User.objects.get_or_create(username='dev-player')
-    UserProfile.objects.get_or_create(user=user)
+    if not dev_accounts_enabled(): return err('开发登录未开放', 'DEV_LOGIN_DISABLED', 403)
+    username = request.data.get('username', 'test-user-01') if isinstance(request.data, dict) else None
+    if not isinstance(username, str) or not username or len(username) > 80:
+        return err('用户名无效', 'INVALID_USERNAME', 400)
+    user = available_accounts().filter(username=username).first()
+    if user is None: return err('测试账号不可用，请先初始化固定测试账号', 'TEST_ACCOUNT_UNAVAILABLE', 403)
     raw, _ = AccessToken.issue(user)
     return Response({'access_token': raw, 'user': {'id':user.id, 'nickname':user.profile.nickname, 'avatar_url':user.profile.avatar_url}})
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def dev_accounts(request):
+    return Response({'enabled': dev_accounts_enabled(), 'accounts': roster()})
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -183,7 +186,7 @@ def favorite_detail(request, product_id):
 @api_view(['GET','POST'])
 def orders(request):
     if request.method == 'GET':
-        qs = Order.objects.filter(user=request.user).select_related('product', 'partner', 'partner__user__profile').prefetch_related('review').order_by('-created_at')
+        qs = Order.objects.filter(user=request.user).select_related('product', 'partner', 'partner__user__profile', 'preferred_partner__user__profile', 'conversation').prefetch_related('review', 'aftersale_cases__refunds').order_by('-created_at')
         return Response(OrderSerializer(qs, many=True).data)
     quantity = request.data.get('quantity'); expected = request.data.get('expected_product_version')
     if type(quantity) is not int: return err('数量必须为整数', 'INVALID_QUANTITY')
@@ -219,6 +222,11 @@ def orders(request):
         category = ProductCategory.objects.select_for_update().filter(pk=p.category_id).first()
         if not p.is_published or not game.is_enabled or not category or not category.is_enabled or category.game_id != game.id: return err('商品已下架', 'PRODUCT_UNAVAILABLE', 409)
         if expected != p.version: return err('商品已更新，请重新确认价格', 'PRODUCT_VERSION_CONFLICT', 409)
+        supported_platforms = [value.strip() for value in p.platforms.split(',') if value.strip() in Order.Platform.values]
+        if platform is not None and platform not in supported_platforms:
+            return err('该商品不支持所选游戏平台，请重新选择', 'UNSUPPORTED_PLATFORM', 400)
+        if platform is None and len(supported_platforms) == 1:
+            platform = supported_platforms[0]
         if quantity < p.min_quantity or quantity > p.max_quantity: return err('购买数量超出范围', 'INVALID_QUANTITY')
         # 校验客户指定的陪玩：须属于商品游戏分区且接单中
         preferred = None
@@ -337,11 +345,19 @@ def confirm_order(request, pk):
         try: order = Order.objects.select_for_update().get(pk=pk, user=request.user)
         except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
         if order.status != Order.Status.PENDING_CONFIRMATION: return err('当前状态不能验收', 'ORDER_STATE_CONFLICT', 409)
+        if 'version' in request.data and (type(request.data['version']) is not int or request.data['version'] != order.version):
+            return err('订单已更新，请刷新后重试', 'VERSION_CONFLICT', 409)
+        conversation = Conversation.objects.filter(order=order).first()
+        if conversation and (conversation.user_id != order.user_id or conversation.partner_id != order.partner_id):
+            return err('订单会话不一致，请联系客服核查', 'CONVERSATION_CONFLICT', 409)
         old = order.status; order.status = Order.Status.COMPLETED; order.completed_at = timezone.now()
         order.aftersale_deadline = order.completed_at + timedelta(hours=get_config_int('aftersale_window_hours', 48))
         order.version += 1
         order.save(update_fields=['status','completed_at','aftersale_deadline','version','updated_at'])
         OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action='CONFIRM', actor=request.user)
+        if conversation:
+            Message.objects.create(conversation=conversation, sender=Message.Sender.USER,
+                                   kind=Message.Kind.COMPLETION_CONFIRMED, content='用户已确认服务完成，订单已完成。')
         response = Response(OrderSerializer(order).data); save_idem(request.user, state, 'CONFIRM', order.id, response); return response
 
 @api_view(['GET','POST'])
@@ -379,39 +395,35 @@ def _partner_of(request):
 def partner_orders(request):
     partner = _partner_of(request)
     if not partner: return err('你不是陪玩或尚未建立档案', 'NOT_PARTNER', 403)
-    qs = Order.objects.filter(partner=partner).select_related('product', 'user__profile').prefetch_related('review').order_by('-created_at')
+    qs = Order.objects.filter(partner=partner).select_related('product', 'user__profile').prefetch_related('review', 'aftersale_cases__refunds').order_by('-created_at')
     return Response(OrderSerializer(qs, many=True).data)
 
 def _partner_order_action(request, pk, action, from_status, to_status):
-    """陪玩对订单的状态流转通用处理。"""
-    partner = _partner_of(request)
-    if not partner: return err('你不是陪玩或尚未建立档案', 'NOT_PARTNER', 403)
-    if not partner.is_active: return err('你的接单权限已被关闭', 'PARTNER_DISABLED', 403)
-    with transaction.atomic():
-        state, replay = get_idem(request.user, request, action)
-        if replay is not None: return replay
-        try: order = Order.objects.select_for_update().get(pk=pk, partner=partner)
-        except Order.DoesNotExist: return err('订单不存在或未派给你', 'NOT_FOUND', 404)
-        if order.status != from_status: return err('当前状态不能执行该操作', 'ORDER_STATE_CONFLICT', 409)
-        old = order.status; order.status = to_status; order.version += 1
-        update_fields = ['status','version','updated_at']
-        if action == 'REJECT':
-            order.partner = None; update_fields.append('partner')
-        order.save(update_fields=update_fields)
-        # 陪玩接单成功后，为客户与陪玩建立订单会话（幂等，一单一会话）
-        if action == 'ACCEPT':
-            Conversation.objects.get_or_create(order=order, defaults={'user': order.user, 'partner': partner})
-        OrderStatusHistory.objects.create(order=order, from_status=old, to_status=order.status, action=action, actor=request.user)
-        response = Response(OrderSerializer(order).data); save_idem(request.user, state, action, order.id, response); return response
+    # Retired mutation API: old clients cannot bypass customer-service confirmation.
+    return err('接单人由客服确认；开始和完成服务请从订单对话操作', 'STAFF_MANAGED_WORKFLOW', 403)
+
+def _partner_service_action(request, pk, action):
+    from .service_orders import partner_progress
+    from .staff_orders import WorkflowError
+    try:
+        with transaction.atomic():
+            state, replay = get_idem(request.user, request, 'PARTNER_' + action.upper())
+            if replay is not None: return replay
+            order = partner_progress(request.user, pk, request.data, action)
+            response = Response(OrderSerializer(order).data)
+            save_idem(request.user, state, action, order.id, response)
+            return response
+    except WorkflowError as exc:
+        return Response(exc.detail, status=exc.status_code)
 
 @api_view(['POST'])
 def partner_accept(request, pk): return _partner_order_action(request, pk, 'ACCEPT', Order.Status.PENDING_ACCEPTANCE, Order.Status.ACCEPTED)
 @api_view(['POST'])
 def partner_reject(request, pk): return _partner_order_action(request, pk, 'REJECT', Order.Status.PENDING_ACCEPTANCE, Order.Status.PENDING_ARRANGEMENT)
 @api_view(['POST'])
-def partner_start(request, pk): return _partner_order_action(request, pk, 'START', Order.Status.ACCEPTED, Order.Status.IN_SERVICE)
+def partner_start(request, pk): return _partner_service_action(request, pk, 'start')
 @api_view(['POST'])
-def partner_complete(request, pk): return _partner_order_action(request, pk, 'COMPLETE', Order.Status.IN_SERVICE, Order.Status.PENDING_CONFIRMATION)
+def partner_complete(request, pk): return _partner_service_action(request, pk, 'complete')
 
 # ============ P5 售后与退款 ============
 
@@ -438,7 +450,7 @@ def aftersale(request, pk):
         except Order.DoesNotExist: return err('订单不存在', 'NOT_FOUND', 404)
         if order.payment_status != Order.PaymentStatus.PAID: return err('订单未付款，无需售后', 'ORDER_STATE_CONFLICT', 409)
         if not _aftersale_window_open(order): return err('已过售后申请时限', 'AFTERSALE_WINDOW_CLOSED', 409)
-        if AfterSaleCase.objects.filter(order=order, status=AfterSaleCase.Status.OPEN).exists(): return err('该订单已有处理中的售后申请', 'AFTERSALE_EXISTS', 409)
+        if AfterSaleCase.objects.filter(order=order, status__in=[AfterSaleCase.Status.OPEN, AfterSaleCase.Status.APPROVED, AfterSaleCase.Status.CLOSED]).exists(): return err('该订单已有处理中或已通过的售后申请', 'AFTERSALE_EXISTS', 409)
         amount = request.data.get('amount_cents') if isinstance(request.data, dict) else None
         reason = (request.data.get('reason') or '') if isinstance(request.data, dict) else ''
         if type(amount) is not int or amount <= 0: return err('退款金额必须为正整数（分）', 'INVALID_AMOUNT')
@@ -503,8 +515,21 @@ def conversations(request):
         unread = sum(1 for m in messages if m.sender != my_sender and m.read_at is None)
         item = ConversationSerializer(conv).data
         item['unread_count'] = unread
+        item['reply_state'] = ('needs_reply' if messages[-1].sender != my_sender else 'awaiting_reply') if messages else 'empty'
         data.append(item)
+    data.sort(key=lambda item: (item['last_message'] or {}).get('created_at', item['created_at']), reverse=True)
     return Response(data)
+
+@api_view(['GET'])
+def conversation_detail(request, pk):
+    conv = _accessible_conversation(request.user, pk)
+    if conv is None: return err('会话不存在', 'NOT_FOUND', 404)
+    my_sender = Message.Sender.USER if conv.user_id == request.user.id else Message.Sender.PARTNER
+    Message.objects.filter(conversation=conv, read_at__isnull=True).exclude(sender=my_sender).update(read_at=timezone.now())
+    return Response({**ConversationSerializer(conv).data,
+                     'viewer_role': my_sender,
+                     'service': {key: getattr(conv.order, key) for key in ('status', 'version', 'started_at', 'completion_requested_at', 'completed_at')},
+                     'messages': MessageSerializer(conv.messages.all(), many=True).data})
 
 @api_view(['GET'])
 def conversation_messages(request, pk):
@@ -520,6 +545,8 @@ def conversation_messages(request, pk):
 def conversation_send(request, pk):
     conv = _accessible_conversation(request.user, pk)
     if conv is None: return err('会话不存在', 'NOT_FOUND', 404)
+    if not isinstance(request.data, dict) or set(request.data) != {'content'}:
+        return err('只接受聊天文本，服务请求请使用订单操作', 'INVALID_FIELDS')
     content = request.data.get('content') if isinstance(request.data, dict) else None
     if not isinstance(content, str) or not content.strip(): return err('消息内容不能为空', 'INVALID_CONTENT')
     if len(content) > 2000: return err('消息内容不能超过2000字', 'INVALID_CONTENT')
