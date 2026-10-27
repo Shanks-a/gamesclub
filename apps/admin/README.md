@@ -1,6 +1,6 @@
 # 游伴独立运营 Web
 
-更新：2026-10-16。Vue 3 + TypeScript + Vite + Router + Pinia + Element Plus。
+更新：2026-10-27。Vue 3 + TypeScript + Vite + Router + Pinia + Element Plus。
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -8,6 +8,8 @@ pnpm dev
 ```
 
 访问 `http://127.0.0.1:5174`，后端先 migrate 并在127.0.0.1:8000运行；`/api`、`/media`、`/static` 由本地代理转发。人工测试统一使用 test-staff-01/02，密码保存在已忽略的本地文件，见 [固定测试账号](../../notices/固定测试账号与使用约定.md)。超级管理员用于维护和受限配置，不用于模拟普通客服。
+
+后台界面会将订单状态和 Element Plus 控件显示为中文。页面采用固定视口布局：左侧导航独立滚动，右侧业务内容独立滚动；只有导航内容超过视口高度时才出现侧栏滚动条。
 
 ## 功能与权限
 
